@@ -1,0 +1,32 @@
+name: Tests
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python: '3.10'
+          - os: macos-latest
+            python: '3.14'
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Python behavior tests
+        run: python -m unittest discover -s tests -p 'test_idea_workbench*.py' -v
+      - name: Canvas syntax and behavior tests
+        run: |
+          node --check idea_workbench/static/app.js
+          node tests/test_idea_workbench_layout.cjs
+          node tests/test_idea_workbench_gestures.cjs

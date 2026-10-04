@@ -1,0 +1,18 @@
+{
+  "name": "ideaflow-desktop",
+  "productName": "IdeaFlow",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A local research graph for ideas, experiments, evidence and next steps",
+  "type": "module",
+  "main": "main.mjs",
+  "scripts": {
+    "start": "electron .",
+    "build": "node package.mjs"
+  },
+  "devDependencies": {
+    "@electron/packager": "20.3.0",
+    "electron": "44.4.3"
+  },
+  "license": "MIT"
+}

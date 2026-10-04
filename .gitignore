@@ -1,0 +1,20 @@
+# Local research data and credentials
+.idea-workbench/
+runs/
+*.sqlite3
+*.sqlite3-*
+.env
+.env.*
+!.env.example
+.agents/
+
+# Python and desktop build outputs
+.venv/
+.venv-*/
+__pycache__/
+*.py[cod]
+node_modules/
+idea_workbench/desktop/build/
+idea_workbench/desktop/release/
+*.app/
+.DS_Store

@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>IdeaFlow</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/graph-layout.js" defer></script>
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#graph-scroll">跳到画布</a>
+  <div class="global-notices">
+    <div id="connection-error" class="notice error global-notice" role="alert" hidden></div>
+    <div id="feedback" class="notice global-notice" role="status" hidden></div>
+    <p id="graph-warning" class="notice error global-notice" role="alert" hidden></p>
+  </div>
+
+  <main class="workspace">
+    <section class="map-panel" aria-labelledby="map-heading">
+      <h1 id="map-heading" class="sr-only">研究画布</h1>
+      <div class="canvas-launchers">
+        <button id="switch-canvas" type="button" aria-haspopup="dialog" aria-controls="canvas-dialog">切换画布 <span id="canvas-title">研究画布</span></button>
+        <div class="canvas-actions">
+          <button id="add-thought" type="button" disabled>想法</button>
+          <button id="add-experiment" type="button" disabled>实验</button>
+          <button id="resume-draft" type="button" hidden>继续草稿</button>
+          <button id="more-options" type="button" aria-haspopup="dialog" aria-controls="options-dialog">更多</button>
+        </div>
+      </div>
+      <p id="canvas-help" class="sr-only">滚动平移，捏合缩放，Shift＋滚轮横移，拖动节点调整位置。按住 Command 拖动框选节点和连线，Command＋点击增减选择；松开 Command 后拖动任一已选节点，可整体移动。Delete 删除所选，Esc 取消选择。方向键平移，Alt＋方向键移动所选节点，加减键缩放，0 适应画布。</p>
+      <div id="graph-scroll" class="graph-scroll" tabindex="0" role="region" aria-label="研究流向图" aria-describedby="canvas-help">
+        <div id="graph-canvas" class="graph-canvas">
+          <svg id="graph-edges" aria-label="节点连线"><defs>
+            <marker id="edge-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M 0 1 L 9 5 L 0 9 Z"></path></marker>
+            <marker id="trace-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M 0 1 L 9 5 L 0 9 Z"></path></marker>
+          </defs><g id="edge-paths"></g><path id="connection-preview" marker-end="url(#trace-arrow)"></path></svg>
+          <div id="graph-nodes"></div>
+        </div>
+        <div id="node-actions" class="node-actions" role="group" aria-label="所选节点操作" hidden>
+          <label class="sr-only" for="node-status">节点状态</label>
+          <select id="node-status"><option value="active">进行中</option><option value="proposed">待验证</option><option value="done">已完成</option><option value="paused">已暂停</option></select>
+          <button id="connect-selected" type="button">连线</button>
+          <button id="edit-selected" type="button">编辑</button>
+          <button id="delete-node" type="button" class="danger">删除</button>
+        </div>
+        <div id="selection-box" aria-hidden="true" hidden></div>
+        <div id="selection-actions" class="selection-actions" role="group" aria-label="批量选择操作" title="拖动任一已选节点可整体移动 · Alt＋方向键微调" hidden>
+          <span id="selection-count" role="status"></span>
+          <button id="delete-selection" type="button" class="danger">删除所选</button>
+          <button id="clear-selection" type="button">取消选择</button>
+        </div>
+        <div id="connection-hint" class="connection-hint" hidden><span id="connection-help" role="status"></span><button id="cancel-connection" type="button">取消连线</button></div>
+        <div class="canvas-controls" role="group" aria-label="画布视图控制">
+          <button id="zoom-out" type="button" aria-label="缩小画布" title="缩小（−）">−</button>
+          <button id="zoom-reset" type="button" aria-label="恢复到百分之百" title="恢复到 100%"><span id="zoom-level">100%</span></button>
+          <button id="zoom-in" type="button" aria-label="放大画布" title="放大（＋）">＋</button>
+          <span class="control-divider" aria-hidden="true"></span>
+          <button id="fit-graph" type="button" title="适应全部可见节点（0）">适应画布</button>
+          <span class="selection-tip">⌘ 拖动框选</span>
+        </div>
+        <div id="empty-graph" class="empty-state" hidden>
+          <span class="empty-symbol" aria-hidden="true">↗</span>
+          <h3>从一个想法开始</h3>
+          <p>写下想法或实验，再从节点下方圆点拖出连线。</p>
+          <button id="empty-create" class="primary" type="button">添加想法</button>
+        </div>
+      </div>
+    </section>
+
+    <div id="detail-resizer" hidden role="separator" tabindex="0" aria-orientation="vertical" aria-label="调整详情宽度" aria-controls="detail-panel" aria-valuemin="320" aria-valuemax="760" aria-valuenow="420"></div>
+    <aside id="detail-panel" class="detail-panel" aria-label="所选节点详情" tabindex="-1" hidden>
+      <button id="close-detail" class="quiet" type="button" aria-label="关闭详情" title="关闭详情">✕</button>
+      <div id="empty-detail" hidden></div>
+      <div id="node-detail" hidden>
+        <div class="detail-header">
+          <div class="detail-meta"><span id="detail-kind" class="kind-tag"></span><span id="detail-status" class="status-badge"></span></div>
+          <h2 id="detail-title"></h2>
+          <p id="detail-id" class="muted mono"></p>
+          <p id="detail-owner" class="muted"></p>
+          <div class="action-row"><button id="edit-node" type="button">编辑记录</button></div>
+          <p id="node-action-error" class="notice error" role="alert" hidden></p>
+        </div>
+        <div class="detail-tabs" role="group" aria-label="详情视图">
+          <button type="button" data-pane="record" aria-pressed="true" aria-controls="pane-record">研究记录</button>
+          <button type="button" data-pane="runs" aria-pressed="false" aria-controls="pane-runs">运行与证据</button>
+          <button type="button" data-pane="context" aria-pressed="false" aria-controls="pane-context">Codex 上下文</button>
+        </div>
+        <section id="pane-record" class="detail-pane">
+          <h3>问题、观察与判断</h3><p id="detail-body" class="prose"></p>
+          <p id="detail-time" class="muted small"></p>
+          <section class="detail-section"><h3>从哪里来</h3><div id="source-list"></div></section>
+          <section class="detail-section"><h3>已经走向哪里</h3><div id="target-list"></div></section>
+          <section class="detail-section"><h3>从这里继续</h3><p class="muted small">添加节点后，在画布里拖拽连线。</p>
+            <div class="derive-actions">
+              <button type="button" data-derive="idea">＋ 想法</button>
+              <button type="button" data-derive="experiment">＋ 实验</button>
+            </div>
+          </section>
+        </section>
+        <section id="pane-runs" class="detail-pane" hidden>
+          <p class="muted small">包含当前节点及其全部上游实验的运行。运行状态与研究节点状态独立记录。</p>
+          <label for="run-select">选择运行</label><select id="run-select"></select>
+          <p id="run-empty" class="notice" hidden>暂无关联运行。请让 Codex / CLI 启动实验并关联实验节点，或导入已有运行。</p>
+          <div id="run-content"></div>
+          <section id="artifact-section" class="detail-section" hidden>
+            <h3>运行文件</h3><p class="muted small">仅点击时读取文件；切换运行后重新选择。</p>
+            <div class="artifact-buttons">
+              <button type="button" data-artifact="stdout.log">标准输出</button>
+              <button type="button" data-artifact="stderr.log">错误输出</button>
+              <button type="button" data-artifact="metrics.json">指标 JSON</button>
+              <button type="button" data-artifact="config.json">配置 JSON</button>
+              <button type="button" data-artifact="snapshot.json">代码快照</button>
+              <button type="button" data-artifact="git.patch">Git 差异</button>
+            </div>
+            <div id="artifact-view" hidden><p id="artifact-title" class="mono small"></p><p id="artifact-error" class="notice error" role="alert" hidden></p><pre id="artifact-text" tabindex="0"></pre></div>
+          </section>
+        </section>
+        <section id="pane-context" class="detail-pane" hidden>
+          <h3>交给 Codex 的研究上下文</h3><p class="muted small">从本地记录生成，包含来源与运行证据。生成后可复制给 Codex；本页面不启动终端命令。</p>
+          <div class="action-row"><button id="generate-context" class="primary" type="button">生成 / 更新上下文</button><button id="copy-context" type="button" disabled>复制</button></div>
+          <p id="context-message" class="notice" role="status" hidden></p>
+          <label class="sr-only" for="context-text">可复制的 Codex 上下文</label><textarea id="context-text" class="context-text mono" readonly placeholder="点击生成，从 API 获取当前节点的上下文。"></textarea>
+        </section>
+      </div>
+    </aside>
+  </main>
+
+  <dialog id="canvas-dialog" aria-labelledby="canvas-heading">
+    <div class="dialog-heading"><h2 id="canvas-heading">切换画布</h2><button id="close-canvases" type="button" aria-label="关闭画布列表">✕</button></div>
+    <div id="canvas-list"></div>
+    <div class="dialog-footer"><button id="create-root" class="primary" type="button" disabled>新建画布</button></div>
+  </dialog>
+
+  <dialog id="new-canvas-dialog" aria-labelledby="new-canvas-heading">
+    <form id="new-canvas-form">
+      <div class="dialog-heading"><h2 id="new-canvas-heading">新建画布</h2><button id="close-new-canvas" type="button" aria-label="关闭新建画布">✕</button></div>
+      <label for="new-canvas-title">画布名称</label><input id="new-canvas-title" maxlength="200" required autocomplete="off" placeholder="例如：新的研究方向">
+      <p id="new-canvas-error" class="notice error" role="alert" hidden></p>
+      <div class="dialog-footer"><button id="save-canvas" type="submit" class="primary">创建画布</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="options-dialog" aria-labelledby="options-heading">
+    <div class="dialog-heading"><h2 id="options-heading">更多</h2><button id="close-options" type="button" aria-label="关闭更多选项">✕</button></div>
+    <section class="options-section" aria-labelledby="project-name">
+      <div class="eyebrow">IDEAFLOW</div>
+      <h3 id="project-name">研究项目</h3>
+      <p id="project-root" class="muted mono project-root">正在连接本地项目…</p>
+      <span id="sync-status" class="sync-status" role="status">正在加载</span>
+      <div class="header-actions"></div>
+      <div class="action-row">
+        <button id="refresh-button" type="button">刷新</button>
+        <a class="button" href="/api/export" download="ideaflow.json">导出 JSON</a>
+        <button id="open-compare" type="button" disabled>比较运行</button>
+      </div>
+    </section>
+    <section class="options-section" aria-label="查找与布局">
+      <form id="search-form" class="search-form" role="search">
+        <label class="sr-only" for="node-search">按标题或 ID 定位节点</label>
+        <input id="node-search" type="search" placeholder="查找标题 / ID" autocomplete="off">
+        <button type="submit">定位</button>
+      </form>
+      <div class="action-row">
+        <button id="locate-selection" type="button" disabled>回到所选</button>
+        <button id="auto-layout" type="button" title="恢复当前画布的自动排布">重新排布</button>
+      </div>
+      <p id="graph-summary" class="muted small">等待项目记录</p>
+      <p id="layout-status" class="muted small" role="status">布局保存在此浏览器</p>
+    </section>
+  </dialog>
+
+  <dialog id="node-dialog" aria-labelledby="form-heading">
+    <form id="node-form">
+      <div class="dialog-heading"><h2 id="form-heading">新建想法</h2><button id="close-form" type="button" aria-label="保留草稿并关闭">✕</button></div>
+      <p id="form-draft-note" class="muted small">草稿保留在当前浏览器标签页；只有保存后才会写入项目。</p>
+      <fieldset id="node-fields">
+        <div id="form-kind-field"><label for="form-kind">类型</label><select id="form-kind"><option value="idea">想法</option><option value="experiment">实验</option></select></div>
+        <label for="form-title">标题 <span class="muted">（必填）</span></label><input id="form-title" required autocomplete="off" placeholder="要回答什么问题，或刚刚发现了什么？">
+        <label for="form-body">详细记录</label><textarea id="form-body" rows="6" placeholder="写下想法、实验设计、观察与证据，以及接下来要验证的问题。"></textarea>
+        <p id="form-placement" class="muted small"></p>
+        <p class="muted small">保存后可在画布里连接节点、调整状态。</p>
+      </fieldset>
+      <p id="form-error" class="notice error" role="alert" hidden></p>
+      <div class="dialog-footer"><button id="discard-draft" type="button" class="quiet danger">丢弃草稿</button><div class="action-row"><button id="keep-draft" type="button">保留草稿并关闭</button><button id="save-node" type="submit" class="primary">保存记录</button></div></div>
+    </form>
+  </dialog>
+
+  <dialog id="compare-dialog" class="compare-dialog" aria-labelledby="compare-heading">
+    <div class="dialog-heading"><h2 id="compare-heading">比较运行</h2><button id="close-compare" type="button" aria-label="关闭运行比较">✕</button></div>
+    <form id="compare-form"><div class="form-grid"><div><label for="compare-left">左侧运行</label><select id="compare-left" required></select></div><div><label for="compare-right">右侧运行</label><select id="compare-right" required></select></div></div><button id="compare-button" class="primary" type="submit">比较运行</button></form>
+    <p class="muted small">差异表仅列出 API 返回的变化项。“字段缺失”与已记录的 null 分别标注；计划参数与实采参数分开展示。</p>
+    <p id="compare-error" class="notice error" role="alert" hidden></p><div id="compare-result"></div>
+  </dialog>
+  <dialog id="delete-dialog" aria-labelledby="delete-heading" aria-describedby="delete-summary">
+    <h2 id="delete-heading">删除所选内容？</h2>
+    <p id="delete-summary" class="prose"></p>
+    <p id="delete-error" class="notice error" role="alert" hidden></p>
+    <div class="dialog-footer"><button id="cancel-delete" type="button" autofocus>取消</button><button id="confirm-delete" type="button" class="danger">确认删除</button></div>
+  </dialog>
+  <noscript><p class="notice error">此工作台需要启用 JavaScript 才能读取和编辑本地项目。</p></noscript>
+</body>
+</html>
