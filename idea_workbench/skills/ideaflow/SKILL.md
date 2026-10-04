@@ -1,5 +1,5 @@
 ---
-name: research-workbench
+name: ideaflow
 description: Continue an idea branch, record experiments and evidence, and preserve insights and next steps in the local IdeaFlow. Use when the user asks to run or review research experiments with this workbench; not for unrelated coding tasks.
 ---
 

@@ -113,8 +113,8 @@ def install_skill(project):
     project = project.expanduser().resolve()
     if not project.is_dir():
         raise ValueError("Project directory must exist")
-    source = Path(__file__).parent / "skills" / "research-workbench" / "SKILL.md"
-    target = project / ".agents" / "skills" / "research-workbench" / "SKILL.md"
+    source = Path(__file__).parent / "skills" / "ideaflow" / "SKILL.md"
+    target = project / ".agents" / "skills" / "ideaflow" / "SKILL.md"
     if target.exists() and target.read_bytes() != source.read_bytes():
         raise ValueError(f"A different skill already exists at {target}; it was not overwritten")
     target.parent.mkdir(parents=True, exist_ok=True)

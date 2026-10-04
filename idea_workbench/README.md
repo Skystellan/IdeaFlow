@@ -14,7 +14,7 @@
 - **新建研究项目**（⌘N）：选择一个项目文件夹，创建其中的 `.idea-workbench/`；已有研究记录不会覆盖。
 - 自动记住最近项目，下次启动恢复；“文件”菜单可切换项目、在 Finder 中显示项目及导出 JSON。
 - 每个项目拥有独立且稳定的本地页面地址。拖动布局、缩放、所选节点和未保存的草稿可跨 App 重启恢复。网页与 App 各自保存视图，已有网页布局不会自动迁移。
-- App 自动管理自己的本地服务，关闭窗口即退出；Codex 启动的独立实验进程不受影响。研究数据留在项目目录，最近项目和视图继续保存在 `~/Library/Application Support/Idea Workbench/`，沿用既有目录和页面地址以保留布局与草稿。产品名称已更新为 IdeaFlow；CLI 模块名、Skill 调用名和 `.idea-workbench/` 数据目录保持兼容。
+- App 自动管理自己的本地服务，关闭窗口即退出；Codex 启动的独立实验进程不受影响。研究数据留在项目目录，最近项目和视图继续保存在 `~/Library/Application Support/Idea Workbench/`，沿用既有目录和页面地址以保留布局与草稿。产品名称已更新为 IdeaFlow；Skill 调用名为 `$ideaflow`；CLI 模块名和 `.idea-workbench/` 数据目录保持兼容。
 
 在 macOS 上从仓库根目录构建：
 
@@ -64,9 +64,9 @@ python3 -m idea_workbench serve
 python3 -m idea_workbench install-skill --project .
 ```
 
-默认记录保存在当前目录的 `.idea-workbench/`。安装命令只将配套 Skill 放入本项目 `.agents/skills/research-workbench/`，不修改全局 Codex 设置，遇到不同内容的现有 Skill 会停止。之后可在 Codex 中使用 `$research-workbench`；若技能列表未更新，重新打开会话或重启客户端。发现位置依据 [Codex 官方 Skill 文档](https://learn.chatgpt.com/docs/build-skills)。
+默认记录保存在当前目录的 `.idea-workbench/`。安装命令只将配套 Skill 放入本项目 `.agents/skills/ideaflow/`，不修改全局 Codex 设置，遇到不同内容的现有 Skill 会停止。之后可在 Codex 中使用 `$ideaflow`；若技能列表未更新，重新打开会话或重启客户端。发现位置依据 [Codex 官方 Skill 文档](https://learn.chatgpt.com/docs/build-skills)。
 
-你可以对 Codex 说：“用 research-workbench 继续这个 idea，先读取研究背景，做一个最小实验，并记下结果、insight 和下一步。”这依赖 Codex 调用记录入口；Skill 不会监听任意终端命令，也不保证所有普通聊天自动归档。
+你可以对 Codex 说：“用 ideaflow 继续这个 idea，先读取研究背景，做一个最小实验，并记下结果、insight 和下一步。”这依赖 Codex 调用记录入口；Skill 不会监听任意终端命令，也不保证所有普通聊天自动归档。
 
 下面的 `CANVAS_ID`、`IDEA_ID`、`EXPERIMENT_ID`、`FINDING_ID`、`RUN_ID` 替换为已有记录或前一步输出的真实 ID；先用 `status` 查看已有画布。所有命令以 JSON 返回结果，`context` 默认返回可读文本。
 

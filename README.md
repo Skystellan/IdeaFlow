@@ -4,7 +4,7 @@ A local research canvas for turning ideas into experiments, evidence, and the ne
 
 **Idea → experiment → result → insight → next experiment.** Keep the branches and their evidence connected, with a human guiding the research loop.
 
-[中文使用指南](idea_workbench/README.md) · [Agent skill](idea_workbench/skills/research-workbench/SKILL.md) · [MIT license](LICENSE)
+[中文使用指南](idea_workbench/README.md) · [Agent skill](idea_workbench/skills/ideaflow/SKILL.md) · [MIT license](LICENSE)
 
 ## What it does
 
@@ -40,7 +40,7 @@ python3 -m idea_workbench install-skill --project /absolute/path/to/research
 python3 -m idea_workbench --store /absolute/path/to/research/.idea-workbench serve
 ```
 
-The skill is installed into that project's `.agents/skills/research-workbench/`. In Codex, invoke `$research-workbench` and provide the IdeaFlow checkout path and research store path. Ask it to read an existing branch, test one small idea, and record the observed result and next question. The skill does not automatically record unrelated chats or shell commands.
+The skill is installed into that project's `.agents/skills/ideaflow/`. In Codex, invoke `$ideaflow` and provide the IdeaFlow checkout path and research store path. Ask it to read an existing branch, test one small idea, and record the observed result and next question. The skill does not automatically record unrelated chats or shell commands.
 
 Useful entry points:
 
