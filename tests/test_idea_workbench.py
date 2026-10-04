@@ -10,6 +10,7 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from pathlib import Path
+from unittest.mock import patch
 
 from idea_workbench.runner import artifact, execute_run, import_run, prepare_run
 from idea_workbench.store import Store
@@ -707,6 +708,15 @@ class HTTPTests(WorkbenchTestCase):
             return response.status, json.loads(response.read())
         finally:
             connection.close()
+
+    def test_loopback_startup_does_not_require_name_resolution(self):
+        from idea_workbench.server import create_server
+
+        # Local startup must also work when the system resolver is unavailable.
+        with patch("socket.getfqdn", side_effect=AssertionError("Unexpected DNS lookup")):
+            with create_server(self.store, port=0) as server:
+                self.assertEqual(server.server_address[0], "127.0.0.1")
+                self.assertGreater(server.server_port, 0)
 
     def test_canvas_scripts_are_served_with_same_origin_policy(self):
         for path in ("/static/app.js", "/static/graph-layout.js"):

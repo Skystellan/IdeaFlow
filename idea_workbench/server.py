@@ -6,12 +6,22 @@ import secrets
 import sqlite3
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from socketserver import TCPServer
 from urllib.parse import parse_qs, urlsplit
 
 from .runner import artifact
 from .store import encode
 
 STATIC = Path(__file__).parent / "static"
+
+
+class LoopbackHTTPServer(ThreadingHTTPServer):
+    def server_bind(self):
+        # HTTPServer resolves its address to a hostname, which can stall startup
+        # on macOS. A loopback-only service already knows its hostname.
+        TCPServer.server_bind(self)
+        self.server_name = "localhost"
+        self.server_port = self.server_address[1]
 
 
 def create_server(store, port=8770):
@@ -116,4 +126,4 @@ def create_server(store, port=8770):
         def log_message(self, format, *args):
             pass
 
-    return ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    return LoopbackHTTPServer(("127.0.0.1", port), Handler)
