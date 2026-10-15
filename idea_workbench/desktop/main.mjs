@@ -179,7 +179,9 @@ async function handleProtocol(request) {
   let body;
   if (request.method !== 'GET') {
     body = await request.arrayBuffer();
-    if (body.byteLength > 1024 * 1024) return new Response('Request too large', { status: 413 });
+    // Pasted images go to their own endpoint; every other write is a small JSON body.
+    const limit = url.pathname === '/api/assets' ? 20 * 1024 * 1024 : 1024 * 1024;
+    if (body.byteLength > limit) return new Response('Request too large', { status: 413 });
   }
   try {
     // Concatenation deliberately keeps paths on our owned loopback service.
@@ -224,7 +226,11 @@ else {
       title: 'IdeaFlow', backgroundColor: '#f4f5f7',
       webPreferences: { preload: path.join(here, 'preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true, spellcheck: false },
     });
-    window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    window.webContents.setWindowOpenHandler(({ url }) => {
+      // Links in notes open in the default browser; the app window never navigates away.
+      if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+      return { action: 'deny' };
+    });
     window.webContents.on('will-navigate', (event, url) => { if (!ownsURL(url)) event.preventDefault(); });
     window.webContents.on('will-attach-webview', event => event.preventDefault());
     window.webContents.on('page-title-updated', event => event.preventDefault());

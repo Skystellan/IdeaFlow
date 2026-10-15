@@ -43,8 +43,11 @@
     return element;
   }
 
-  function create({ container, api, refresh, notify, onFork }) {
+  // `prompts` holds what waits on the researcher (decide, react) above the note; `container` the entries.
+  function create({ container, prompts = container, api, refresh, notify, onFork }) {
     const { byNode, awaitingReaction, label, isHindsight, OUTCOME_LABELS } = window.JournalModel;
+    const scopes = [...new Set([prompts, container])];
+    const inputs = () => scopes.flatMap(scope => [...scope.querySelectorAll('[data-draft]')]);
     // Unsaved words per node, so switching nodes or a background refresh never loses them.
     const saved = new Map();
     let signature = '', nodeId = null, busy = false, composing = false, deferred = null;
@@ -53,7 +56,7 @@
 
     function readDrafts() {
       const drafts = {};
-      container.querySelectorAll('[data-draft]').forEach(input => {
+      inputs().forEach(input => {
         if (input.type !== 'radio') drafts[draftKey(input)] = input.value;
         else if (input.checked) drafts[draftKey(input)] = input.value;
       });
@@ -61,7 +64,7 @@
     }
 
     function writeDrafts(drafts) {
-      container.querySelectorAll('[data-draft]').forEach(input => {
+      inputs().forEach(input => {
         const value = drafts[draftKey(input)];
         if (input.type === 'radio') input.checked = value === input.value;
         else if (value !== undefined) input.value = value;
@@ -69,7 +72,7 @@
     }
 
     function clearDrafts(keys) {
-      container.querySelectorAll('[data-draft]').forEach(input => {
+      inputs().forEach(input => {
         if (!keys.includes(draftKey(input))) return;
         if (input.type === 'radio') input.checked = false; else input.value = '';
       });
@@ -80,7 +83,7 @@
     // Rebuilding while someone types (or composes with an IME) would steal focus; wait until they leave.
     function editing() {
       const active = document.activeElement;
-      return composing || Boolean(active && container.contains(active) && active.matches('textarea, input, select'));
+      return composing || Boolean(active && scopes.some(scope => scope.contains(active)) && active.matches('textarea, input, select'));
     }
 
     function flush() {
@@ -90,9 +93,11 @@
       render(node, state);
     }
 
-    container.addEventListener('compositionstart', () => { composing = true; });
-    container.addEventListener('compositionend', () => { composing = false; });
-    container.addEventListener('focusout', () => setTimeout(flush, 0));
+    for (const scope of scopes) {
+      scope.addEventListener('compositionstart', () => { composing = true; });
+      scope.addEventListener('compositionend', () => { composing = false; });
+      scope.addEventListener('focusout', () => setTimeout(flush, 0));
+    }
 
     async function submit(trigger, error, path, body, success, keys) {
       if (busy) return;
@@ -171,7 +176,7 @@
     function entryList(node, entries, runs) {
       const section = el('section', 'journal-entries');
       section.append(el('h3', '', '原话记录'),
-        el('p', 'muted small', '只追加，不能修改。你的原话和 Agent 的话分开标注；上方“整理”可以随时改写。'));
+        el('p', 'muted small', '只追加，不能修改。你的原话和 Agent 的话分开标注；上方的笔记可以随时改写。'));
       if (!entries.length) {
         section.append(el('p', 'journal-missing', '还没有原话记录。可以在下面写一句当时的想法；事后补写的内容会带上补写的时间。'));
         return section;
@@ -215,7 +220,7 @@
 
     function render(node, state) {
       if (nodeId) saved.set(nodeId, readDrafts());
-      if (!node) { deferred = null; container.replaceChildren(); signature = ''; nodeId = null; return; }
+      if (!node) { deferred = null; scopes.forEach(scope => scope.replaceChildren()); signature = ''; nodeId = null; return; }
       const entries = byNode(state.entries).get(node.id) || [];
       const runs = state.runs.filter(run => run.experiment_id === node.id);
       const proposals = entries.filter(entry => entry.kind === 'proposal');
@@ -228,14 +233,18 @@
       deferred = null;
       signature = next;
       nodeId = node.id;
-      container.replaceChildren(...[awaiting ? decisionBox(node, proposals) : null, ...pending.map(reactionBox),
-        entryList(node, entries, runs), noteForm(node)].filter(Boolean));
+      const asks = [awaiting ? decisionBox(node, proposals) : null, ...pending.map(reactionBox)].filter(Boolean);
+      if (prompts === container) container.replaceChildren(...asks, entryList(node, entries, runs), noteForm(node));
+      else {
+        prompts.replaceChildren(...asks);
+        container.replaceChildren(entryList(node, entries, runs), noteForm(node));
+      }
       writeDrafts(saved.get(node.id) || {});
     }
 
     function focus(kind) {
       if (!kind) return;
-      const target = container.querySelector(kind === 'decision' ? '[data-draft="decision-text"]'
+      const target = prompts.querySelector(kind === 'decision' ? '[data-draft="decision-text"]'
         : '[data-prompt="reaction"] input[type="radio"]');
       target?.focus({ preventScroll: false });
     }

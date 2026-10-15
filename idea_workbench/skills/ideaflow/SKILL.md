@@ -33,7 +33,7 @@ The journal is append-only and separate from the graph. Titles, bodies, grouping
 
 Use `--source NODE_ID` when creating a node to connect it to its exact source; repeat it for a synthesis of multiple sources on the same canvas. Nodes may also be created without connections, then connected with `link --source SOURCE_ID --target TARGET_ID --reason TEXT`. `unlink --source SOURCE_ID --target TARGET_ID` removes only that connection. Links express provenance or a proposed direction, not proof; self-links, cycles and cross-canvas links are not allowed. `--idea IDEA_ID` sets legacy branch ownership when needed for a synthesis; it does not select a canvas.
 
-Use `edit NODE_ID --status STATUS` to change a node's state:
+Use `edit NODE_ID --kind idea|experiment` to change a node's type when the researcher asks; an experiment with runs stays an experiment, and a proposal awaiting a decision keeps its type. Use `edit NODE_ID --status STATUS` to change a node's state:
 
 - `proposed`: a question or test awaiting validation; explicitly pass `--status proposed` when recording a planned experiment.
 - `active`: currently being pursued; set it when starting an experiment.
@@ -64,7 +64,7 @@ For an already completed experiment, use `import-run` with its metrics. Imported
 
 Read the actual run records and relevant logs. Use `compare LEFT_RUN RIGHT_RUN` when conditions are meaningfully comparable. Missing metrics, execution failures and scientific negative results are different outcomes.
 
-Record observations, tentative explanations and alternatives separately in the body, cite the run IDs, and identify agent-authored interpretations as drafts. Update the relevant existing record when the result refines it. Add an `idea` linked to its experiment(s) when a distinct finding or branch deserves its own node; use `propose` for a concrete next test, explaining in `--why` why it helps and how outcomes would change the direction. Do not mechanically create two more nodes after every run. Use `--body-file` for substantial prose.
+Bodies are Markdown; the app renders headings, lists, task lists (`- [ ]`), code blocks, links and images, and the researcher edits them there as notes. Images appear as `![](assets/NAME)`; the file is in the store's `assets/` directory, so open it when it matters. Keep image references when rewriting a body. Record observations, tentative explanations and alternatives separately in the body, cite the run IDs, and identify agent-authored interpretations as drafts. Update the relevant existing record when the result refines it. Add an `idea` linked to its experiment(s) when a distinct finding or branch deserves its own node; use `propose` for a concrete next test, explaining in `--why` why it helps and how outcomes would change the direction. Do not mechanically create two more nodes after every run. Use `--body-file` for substantial prose.
 
 The researcher can revise drafts, pause a branch or continue immediately; this workflow adds no approval gate to already authorized work. `edit` preserves prior text. Do not delete historical evidence merely to tidy the graph.
 

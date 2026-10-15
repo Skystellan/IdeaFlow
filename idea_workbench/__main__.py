@@ -46,6 +46,7 @@ def parser():
     edit.add_argument("--body")
     edit.add_argument("--body-file", type=Path)
     edit.add_argument("--status", choices=sorted(STATUSES))
+    edit.add_argument("--kind", choices=sorted(KINDS), help="Change the node type; experiments with runs stay experiments")
     context = sub.add_parser("context", help="Retrieve a research branch for a fresh Codex conversation")
     context.add_argument("id")
     context.add_argument("--json", action="store_true")
@@ -188,7 +189,7 @@ def main():
             elif args.action == "unlink":
                 result = store.remove_edge(args.source, args.target)
             elif args.action == "edit":
-                changes = {k: getattr(args, k) for k in ("title", "body", "status") if getattr(args, k) is not None}
+                changes = {k: getattr(args, k) for k in ("title", "body", "status", "kind") if getattr(args, k) is not None}
                 if args.body_file:
                     changes["body"] = args.body_file.read_text()
                 result = store.edit_node(args.id, **changes)

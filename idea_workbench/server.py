@@ -9,6 +9,7 @@ from pathlib import Path
 from socketserver import TCPServer
 from urllib.parse import parse_qs, urlsplit
 
+from . import assets
 from .journal import frontier
 from .runner import artifact
 from .store import encode
@@ -19,7 +20,8 @@ STATIC_FILES = {
     "/static/style.css": ("style.css", "text/css"),
     **{f"/static/{name}": (name, "text/javascript") for name in (
         "app.js", "graph-layout.js", "thread-layout.js", "journal-model.js",
-        "threads-view.js", "journal-view.js", "frontier-view.js")},
+        "threads-view.js", "journal-view.js", "frontier-view.js",
+        "note-markdown.js", "note-dom.js", "note-editor.js", "note-menus.js", "note-outbox.js", "node-page.js")},
 }
 
 
@@ -44,12 +46,12 @@ def create_server(store, port=8770):
     token = secrets.token_urlsafe(32)
 
     class Handler(BaseHTTPRequestHandler):
-        def reply(self, data, status=200, content_type="application/json; charset=utf-8"):
+        def reply(self, data, status=200, content_type="application/json; charset=utf-8", cache="no-store"):
             body = data if isinstance(data, bytes) else encode(data).encode("utf-8")
             self.send_response(status)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
-            self.send_header("Cache-Control", "no-store")
+            self.send_header("Cache-Control", cache)
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Referrer-Policy", "no-referrer")
             self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
@@ -85,7 +87,9 @@ def create_server(store, port=8770):
                 return values[0]
 
             try:
-                if mutation:
+                if mutation and self.command == "POST" and url.path == "/api/assets":
+                    self.upload()
+                elif mutation:
                     if self.headers.get_content_type() != "application/json":
                         self.reply({"error": "Expected application/json"}, 415)
                         return
@@ -122,6 +126,8 @@ def create_server(store, port=8770):
                 elif url.path in STATIC_FILES:
                     name, mime = STATIC_FILES[url.path]
                     self.reply((STATIC / name).read_bytes(), content_type=mime + "; charset=utf-8")
+                elif url.path.startswith("/assets/"):
+                    self.image(url.path.removeprefix("/assets/"))
                 elif url.path == "/api/state":
                     state = store.state()
                     self.reply(state | {"frontier": frontier(state), "csrf_token": token})
@@ -143,6 +149,26 @@ def create_server(store, port=8770):
                 self.reply({"error": str(exc)}, 400)
             except (sqlite3.Error, OSError):
                 self.reply({"error": "Local storage is temporarily unavailable"}, 503)
+
+        def upload(self):
+            mime = self.headers.get_content_type()
+            if mime not in assets.TYPES:
+                self.reply({"error": "Images must be PNG, JPEG, GIF or WebP"}, 415)
+                return
+            length = int(self.headers.get("Content-Length", "0"))
+            if length < 1 or length > assets.LIMIT:
+                self.reply({"error": "Images must be 1 byte to 20 MiB"}, 413)
+                return
+            self.reply(assets.save(store.path, self.rfile.read(length), mime), 201)
+
+        def image(self, name):
+            try:
+                data, mime = assets.read(store.path, name)
+            except (ValueError, FileNotFoundError):
+                self.reply({"error": "Image not found"}, 404)
+                return
+            # Names are content hashes, so a stored image never changes.
+            self.reply(data, content_type=mime, cache="private, max-age=31536000, immutable")
 
         do_GET = dispatch
         do_POST = dispatch

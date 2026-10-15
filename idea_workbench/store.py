@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 import uuid
 from contextlib import closing, contextmanager
 from pathlib import Path
@@ -12,6 +13,10 @@ from .fields import encode, now, text_field
 
 KINDS = {"idea", "experiment", "insight", "next"}
 STATUSES = {"active", "paused", "done", "proposed"}
+BODY_LIMIT = 100000
+TEXT_FIELDS = {"title", "body"}
+# An app editing session overwrites its own autosaves for this long before taking another snapshot.
+DRAFT_WINDOW = 10 * 60
 __all__ = ["KINDS", "STATUSES", "Store", "encode", "now", "text_field"]
 
 
@@ -19,6 +24,9 @@ class Store:
     def __init__(self, path):
         self.path = Path(path).expanduser().resolve()
         self.db = self.path / "research.sqlite3"
+        # Latest app autosave per node: (editing session, resulting updated_at, session start).
+        self._drafts = {}
+        self._clock = time.monotonic
         if not self.db.is_file():
             raise ValueError("Project is not initialized. Run: python3 -m idea_workbench init")
         with self.connect() as db:
@@ -111,7 +119,7 @@ class Store:
         if kind not in KINDS:
             raise ValueError("kind must be idea, experiment, insight or next")
         title = text_field(title, "title", 200, True)
-        body = text_field(body, "body", 20000)
+        body = text_field(body, "body", BODY_LIMIT)
         reason = text_field(reason, "reason", 4000)
         status = status or ("proposed" if kind == "next" else "active")
         if status not in STATUSES:
@@ -239,21 +247,50 @@ class Store:
                 counts["nodes"] = db.execute(f"DELETE FROM nodes WHERE id IN ({placeholders})", node_ids).rowcount
         return counts
 
-    def edit_node(self, node_id, **changes):
-        if not changes or set(changes) - {"title", "body", "status"}:
-            raise ValueError("Only title, body and status can be edited")
+    def edit_node(self, node_id, draft_session=None, **changes):
+        """Edit a node, keeping its previous version. `draft_session` marks an app autosave."""
+        if not changes or set(changes) - {"title", "body", "status", "kind"}:
+            raise ValueError("Only title, body, status and kind can be edited")
+        if draft_session is not None:
+            draft_session = text_field(draft_session, "draft_session", 64, True)
         if "title" in changes:
             changes["title"] = text_field(changes["title"], "title", 200, True)
         if "body" in changes:
-            changes["body"] = text_field(changes["body"], "body", 20000)
+            changes["body"] = text_field(changes["body"], "body", BODY_LIMIT)
         if "status" in changes and changes["status"] not in STATUSES:
             raise ValueError("Invalid node status")
+        if "kind" in changes and changes["kind"] not in KINDS:
+            raise ValueError("kind must be idea, experiment, insight or next")
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             old = self._node(db, node_id)
             if old["status"] == "proposed" and changes.get("status", "proposed") != "proposed" and self._undecided(db, node_id):
                 raise ValueError("This proposal awaits the researcher's decision; record it with decide instead of a status edit")
-            return self._revise(db, old, changes)
+            if changes.get("kind", old["kind"]) != old["kind"]:
+                self._change_kind(db, old, changes["kind"])
+            continued = self._continues_draft(old, draft_session, changes)
+            node = self._revise(db, old, changes, snapshot=not continued)
+        if draft_session is not None and set(changes) <= TEXT_FIELDS:
+            started = self._drafts[node_id][2] if continued else self._clock()
+            self._drafts[node_id] = (draft_session, node["updated_at"], started)
+        else:
+            self._drafts.pop(node_id, None)
+        return node
+
+    def _change_kind(self, db, old, kind):
+        if self._undecided(db, old["id"]):
+            raise ValueError("This proposal awaits the researcher's decision; its type cannot change before then")
+        if kind != "experiment" and db.execute("SELECT 1 FROM runs WHERE experiment_id=? LIMIT 1", (old["id"],)).fetchone():
+            raise ValueError("This experiment has recorded runs; runs must stay with an experiment")
+        # Links into an idea read as forks; a synthesis of several sources keeps its label.
+        previous, relation = ("continues", "fork") if kind == "idea" else ("fork", "continues")
+        db.execute("UPDATE edges SET relation=? WHERE target=? AND relation=?", (relation, old["id"], previous))
+
+    def _continues_draft(self, old, session, changes):
+        """True when this autosave follows the same session's last save with nothing written in between."""
+        last = self._drafts.get(old["id"])
+        return (session is not None and set(changes) <= TEXT_FIELDS and last is not None
+                and last[:2] == (session, old["updated_at"]) and self._clock() - last[2] < DRAFT_WINDOW)
 
     @staticmethod
     def _undecided(db, node_id):
@@ -261,10 +298,11 @@ class Store:
         return kinds == {"proposal"}
 
     @staticmethod
-    def _revise(db, old, changes):
+    def _revise(db, old, changes, snapshot=True):
         node = old | changes | {"updated_at": now()}
-        db.execute("INSERT INTO revisions(node_id,previous,changed_at) VALUES(?,?,?)", (old["id"], encode(old), node["updated_at"]))
-        db.execute("UPDATE nodes SET title=:title,body=:body,status=:status,updated_at=:updated_at WHERE id=:id", node)
+        if snapshot:
+            db.execute("INSERT INTO revisions(node_id,previous,changed_at) VALUES(?,?,?)", (old["id"], encode(old), node["updated_at"]))
+        db.execute("UPDATE nodes SET kind=:kind,title=:title,body=:body,status=:status,updated_at=:updated_at WHERE id=:id", node)
         return node
 
     # Journal: append-only words. Graph edits never touch these rows.
@@ -419,6 +457,8 @@ class Store:
         entries = [e for e in data["entries"] if e["node_id"] in history_ids]
         lines.append("\n原话记录（只追加，当时写下；引用时不要改写，也不要把 Agent 的话当成研究者的意图）：")
         lines.extend(journal.journal_lines(entries) or ["（尚无当时记录的原话）"])
+        if any("](assets/" in n["body"] for n in history):
+            lines.extend(["", f"正文是 Markdown；其中的图片 assets/文件名 位于 {self.path / 'assets'}，可直接读取查看。"])
         lines.extend(["", "继续研究时保留来源节点；结果、解释与候选下一步分别记录。未知的历史参数或代码状态不要补造。"])
         return {"node": selected, "history": history, "runs": runs, "next_steps": next_steps, "entries": entries,
                 "text": "\n".join(lines)}

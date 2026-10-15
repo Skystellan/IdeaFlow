@@ -12,6 +12,12 @@
   <script src="/static/threads-view.js" defer></script>
   <script src="/static/journal-view.js" defer></script>
   <script src="/static/frontier-view.js" defer></script>
+  <script src="/static/note-markdown.js" defer></script>
+  <script src="/static/note-dom.js" defer></script>
+  <script src="/static/note-menus.js" defer></script>
+  <script src="/static/note-editor.js" defer></script>
+  <script src="/static/note-outbox.js" defer></script>
+  <script src="/static/node-page.js" defer></script>
   <script src="/static/app.js" defer></script>
 </head>
 <body>
@@ -42,7 +48,7 @@
           <button id="more-options" type="button" aria-haspopup="dialog" aria-controls="options-dialog">更多</button>
         </div>
       </div>
-      <p id="canvas-help" class="sr-only">滚动平移，捏合缩放，Shift＋滚轮横移，拖动节点调整位置。按住 Command 拖动框选节点和连线，Command＋点击增减选择；松开 Command 后拖动任一已选节点，可整体移动。Delete 删除所选，Esc 取消选择。方向键平移，Alt＋方向键移动所选节点，加减键缩放，0 适应画布。</p>
+      <p id="canvas-help" class="sr-only">双击空白处新建想法，双击节点打开整页。滚动平移，捏合缩放，Shift＋滚轮横移，拖动节点调整位置。按住 Command 拖动框选节点和连线，Command＋点击增减选择；松开 Command 后拖动任一已选节点，可整体移动。Delete 删除所选，Esc 取消选择。方向键平移，Alt＋方向键移动所选节点，加减键缩放，0 适应画布。</p>
       <div id="graph-scroll" class="graph-scroll" tabindex="0" role="region" aria-label="研究流向图" aria-describedby="canvas-help">
         <div id="graph-canvas" class="graph-canvas">
           <svg id="graph-edges" aria-label="节点连线"><defs>
@@ -52,10 +58,12 @@
           <div id="graph-nodes"></div>
         </div>
         <div id="node-actions" class="node-actions" role="group" aria-label="所选节点操作" hidden>
+          <label class="sr-only" for="node-kind">节点类型</label>
+          <select id="node-kind"><option value="thought">想法</option><option value="experiment">实验</option></select>
           <label class="sr-only" for="node-status">节点状态</label>
           <select id="node-status"><option value="active">进行中</option><option value="proposed">待验证</option><option value="done">已完成</option><option value="paused">已暂停</option></select>
           <button id="connect-selected" type="button">连线</button>
-          <button id="edit-selected" type="button">编辑</button>
+          <button id="open-page" type="button" title="打开为整页（双击节点）">整页</button>
           <button id="delete-node" type="button" class="danger">删除</button>
         </div>
         <div id="selection-box" aria-hidden="true" hidden></div>
@@ -87,7 +95,7 @@
         <div id="empty-graph" class="empty-state" hidden>
           <span class="empty-symbol" aria-hidden="true">↗</span>
           <h3>从一个想法开始</h3>
-          <p>写下想法或实验，再从节点下方圆点拖出连线。</p>
+          <p>点“添加想法”或双击空白处，直接开始写。<br>节点之间从下方圆点拖出连线。</p>
           <button id="empty-create" class="primary" type="button">添加想法</button>
         </div>
       </div>
@@ -95,26 +103,39 @@
 
     <div id="detail-resizer" hidden role="separator" tabindex="0" aria-orientation="vertical" aria-label="调整详情宽度" aria-controls="detail-panel" aria-valuemin="320" aria-valuemax="760" aria-valuenow="420"></div>
     <aside id="detail-panel" class="detail-panel" aria-label="所选节点详情" tabindex="-1" hidden>
-      <button id="close-detail" class="quiet" type="button" aria-label="关闭详情" title="关闭详情">✕</button>
+      <div class="page-bar">
+        <span id="detail-owner" class="page-crumb"></span>
+        <span id="save-state" class="save-state" role="status" aria-live="polite"></span>
+        <button id="toggle-page" class="quiet" type="button" aria-pressed="false" aria-label="展开为整页" title="展开为整页">⤢</button>
+        <button id="delete-node-detail" type="button" class="quiet danger">删除</button>
+        <button id="close-detail" class="quiet" type="button" aria-label="关闭详情" title="关闭（Esc）">✕</button>
+      </div>
       <div id="empty-detail" hidden></div>
       <div id="node-detail" hidden>
         <div class="detail-header">
-          <div class="detail-meta"><span id="detail-kind" class="kind-tag"></span><span id="detail-status" class="status-badge"></span></div>
-          <h2 id="detail-title"></h2>
-          <p id="detail-id" class="muted mono"></p>
-          <p id="detail-owner" class="muted"></p>
-          <div class="action-row"><button id="edit-node" type="button">编辑记录</button><label class="sr-only" for="detail-status-select">节点状态</label><select id="detail-status-select" class="detail-status-select"><option value="active">进行中</option><option value="proposed">待验证</option><option value="done">已完成</option><option value="paused">已暂停</option></select><button id="delete-node-detail" type="button" class="quiet danger">删除</button></div>
+          <label class="sr-only" for="detail-title">标题</label>
+          <textarea id="detail-title" class="page-title" rows="1" maxlength="200" placeholder="未命名" spellcheck="false"></textarea>
+          <div class="page-props">
+            <span class="prop-label" id="kind-label">类型</span>
+            <span class="kind-switch" role="group" aria-labelledby="kind-label">
+              <button type="button" data-kind="thought" aria-pressed="false">想法</button>
+              <button type="button" data-kind="experiment" aria-pressed="false">实验</button>
+            </span>
+            <label class="prop-label" for="detail-status-select">状态</label>
+            <select id="detail-status-select" class="detail-status-select"><option value="active">进行中</option><option value="proposed">待验证</option><option value="done">已完成</option><option value="paused">已暂停</option></select>
+          </div>
+          <p id="detail-time" class="page-meta"></p>
           <p id="node-action-error" class="notice error" role="alert" hidden></p>
         </div>
         <div class="detail-tabs" role="group" aria-label="详情视图">
-          <button type="button" data-pane="record" aria-pressed="true" aria-controls="pane-record">研究记录</button>
+          <button type="button" data-pane="record" aria-pressed="true" aria-controls="pane-record">笔记</button>
           <button type="button" data-pane="runs" aria-pressed="false" aria-controls="pane-runs">运行与证据</button>
           <button type="button" data-pane="context" aria-pressed="false" aria-controls="pane-context">Codex 上下文</button>
         </div>
         <section id="pane-record" class="detail-pane">
-          <section id="journal-section" class="journal-section" aria-label="原话记录"></section>
-          <h3 class="detail-section">整理 <span class="muted small">（可随时改写）</span></h3><p id="detail-body" class="prose"></p>
-          <p id="detail-time" class="muted small"></p>
+          <div id="prompt-section" class="journal-section" aria-label="等你回应"></div>
+          <div id="note-editor" aria-label="笔记"></div>
+          <section id="journal-section" class="journal-section detail-section" aria-label="原话记录"></section>
           <section class="detail-section"><h3>从哪里来</h3><div id="source-list"></div></section>
           <section class="detail-section"><h3>已经走向哪里</h3><div id="target-list"></div></section>
           <section class="detail-section"><h3>从这里继续</h3><p class="muted small">新节点会自动连到当前节点。</p>
@@ -194,22 +215,6 @@
       <p id="graph-summary" class="muted small">等待项目记录</p>
       <p id="layout-status" class="muted small" role="status">布局保存在此浏览器</p>
     </section>
-  </dialog>
-
-  <dialog id="node-dialog" aria-labelledby="form-heading">
-    <form id="node-form">
-      <div class="dialog-heading"><h2 id="form-heading">新建想法</h2><button id="close-form" type="button" aria-label="保留草稿并关闭">✕</button></div>
-      <p id="form-draft-note" class="muted small">草稿保留在当前浏览器标签页；只有保存后才会写入项目。</p>
-      <fieldset id="node-fields">
-        <div id="form-kind-field"><label for="form-kind">类型</label><select id="form-kind"><option value="idea">想法</option><option value="experiment">实验</option></select></div>
-        <label for="form-title">标题 <span class="muted">（必填）</span></label><input id="form-title" required autocomplete="off" placeholder="要回答什么问题，或刚刚发现了什么？">
-        <label for="form-body">详细记录</label><textarea id="form-body" rows="6" placeholder="写下想法、实验设计、观察与证据，以及接下来要验证的问题。"></textarea>
-        <p id="form-placement" class="muted small"></p>
-        <p class="muted small">保存后可在画布里连接节点、调整状态。</p>
-      </fieldset>
-      <p id="form-error" class="notice error" role="alert" hidden></p>
-      <div class="dialog-footer"><button id="discard-draft" type="button" class="quiet danger">丢弃草稿</button><div class="action-row"><button id="keep-draft" type="button">保留草稿并关闭</button><button id="save-node" type="submit" class="primary">保存记录</button></div></div>
-    </form>
   </dialog>
 
   <dialog id="compare-dialog" class="compare-dialog" aria-labelledby="compare-heading">

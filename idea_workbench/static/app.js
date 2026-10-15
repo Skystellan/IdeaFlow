@@ -25,16 +25,17 @@
   let canvasById = new Map();
   let incoming = new Map();
   let outgoing = new Map();
-  // Reopening the app starts with an unobstructed canvas; drafts are still restored.
+  // Reopening the app starts with an unobstructed canvas. A new-node draft left by the old form is offered once.
   let selectedId = null;
   let selectedRunId = '';
-  let draft = saved.draft && ['create', 'edit'].includes(saved.draft.mode) ? saved.draft : null;
+  let draft = saved.draft?.mode === 'create' && saved.draft.title?.trim() ? saved.draft : null;
+  let page = null;
   let pane = 'record';
   let graphSignature = '';
   let detailSignature = '';
   let runsSignature = '';
   let refreshPromise = null;
-  let saving = false;
+  let creating = false;
   let statusSaving = false;
   let pollTimer;
   let contextRequest = 0;
@@ -79,7 +80,7 @@
 
   function remember() {
     try { (desktop ? localStorage : sessionStorage).setItem(STORAGE_KEY, JSON.stringify({ selectedId, selectedRunId, draft })); }
-    catch { if (draft && $('node-dialog').open) $('form-draft-note').textContent = '浏览器存储不可用；草稿仅在当前页面保留，请勿刷新。'; }
+    catch { /* Storage can be disabled; the view then starts fresh next time. */ }
     $('resume-draft').hidden = !draft;
   }
 
@@ -101,15 +102,15 @@
   function ownerId(node) { return node.canvas_id; }
   function runLabel(run) { return `${run.id} · ${RUN_STATUSES[run.status] || run.status} · ${nodeById.get(run.experiment_id)?.title || run.experiment_id}`; }
 
-  async function api(path, options = {}) {
+  async function api(path, { timeout: limit = 15000, ...options } = {}) {
     const headers = { Accept: 'application/json', ...options.headers };
     if (options.method && options.method !== 'GET') {
-      if (!state?.csrf_token) throw new Error('尚未取得写入令牌。请刷新连接后重试，草稿会保留。');
-      headers['Content-Type'] = 'application/json';
+      if (!state?.csrf_token) throw new Error('尚未取得写入令牌。请刷新连接后重试，修改会保留。');
+      headers['Content-Type'] ||= 'application/json';
       headers['X-Idea-Token'] = state.csrf_token;
     }
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15000);
+    const timeout = setTimeout(() => controller.abort(), limit);
     try {
       const response = await fetch(path, { ...options, headers, signal: controller.signal, credentials: 'same-origin', cache: 'no-store' });
       const text = await response.text();
@@ -122,6 +123,7 @@
       try { return JSON.parse(text); } catch { throw new Error('服务返回了无效 JSON，请检查本地服务。'); }
     } catch (error) {
       if (error.name === 'AbortError') throw new Error('请求超时，请检查本地服务后重试。');
+      if (error instanceof TypeError) throw new Error('暂时连不上本地服务。');
       throw error;
     } finally { clearTimeout(timeout); }
   }
@@ -221,6 +223,8 @@
     resetContext();
     resetArtifact();
     $('detail-panel').hidden = $('detail-resizer').hidden = true;
+    page?.show(null, state);
+    page?.setPageMode(false);
     highlightGraph();
     remember();
   }
@@ -266,6 +270,8 @@
     }
     statusControl.dataset.statusNodeId = node.id;
     if (statusControl.disabled !== statusSaving) statusControl.disabled = statusSaving;
+    const kindControl = $('node-kind'), category = window.NodePage.category(node.kind);
+    if (document.activeElement !== kindControl && kindControl.value !== category) kindControl.value = category;
     const viewport = $('graph-scroll'), width = toolbar.offsetWidth, height = toolbar.offsetHeight;
     const x = camera.x + (point.x + Graph.NODE_WIDTH / 2) * camera.scale - width / 2;
     let y = camera.y + (point.y + Graph.NODE_HEIGHT) * camera.scale + 18;
@@ -394,7 +400,7 @@
   }
 
   function requestDeletion() {
-    if (edgeSaving || saving || statusSaving || gesture || connectionSource || $('delete-dialog').open) return;
+    if (edgeSaving || creating || statusSaving || gesture || connectionSource || $('delete-dialog').open) return;
     const payload = selectionPayload(), ids = new Set(payload.node_ids);
     if (!ids.size && !payload.edges.length) return;
     const edges = state.edges.filter(edge => ids.has(edge.source) || ids.has(edge.target) || selectedEdges.has(edgeKey(edge)));
@@ -416,9 +422,9 @@
     try {
       const result = await api('/api/selection', { method: 'DELETE', body: JSON.stringify(payload) });
       for (const id of payload.node_ids) manualPositions.delete(id);
+      page.forget(payload.node_ids);
       clearSelection();
       if (payload.node_ids.includes(selectedId)) closeDetails();
-      if (draft?.mode === 'edit' && payload.node_ids.includes(draft.id)) { draft = null; remember(); }
       pendingDeletion = null;
       $('delete-dialog').close();
       await refreshAfterWrite();
@@ -912,18 +918,14 @@
     $('empty-detail').hidden = Boolean(node);
     $('node-detail').hidden = !node;
     journalView?.render(node || null, state);
-    if (!node) return;
+    page?.show(node || null, state);
+    if (!node) { page?.setPageMode(false); return; }
     const signature = JSON.stringify([node, incoming.get(node.id).map(edge => [edge, nodeById.get(edge.source)]), outgoing.get(node.id).map(edge => [edge, nodeById.get(edge.target)]), canvasById.get(ownerId(node))]);
     if (signature !== detailSignature) {
       detailSignature = signature;
-      $('detail-kind').textContent = KINDS[node.kind];
-      $('detail-status').textContent = STATUSES[node.status];
-      $('detail-status').dataset.status = node.status;
-      $('detail-title').textContent = node.title;
-      $('detail-id').textContent = node.id;
-      $('detail-owner').textContent = `画布：${canvasById.get(ownerId(node))?.title || '未记录'}`;
-      $('detail-body').textContent = node.body || '尚未填写详细记录。';
-      $('detail-time').textContent = `创建 ${date(node.created_at)} · 更新 ${date(node.updated_at)}`;
+      $('detail-owner').textContent = canvasById.get(ownerId(node))?.title || '未记录画布';
+      $('detail-owner').title = `画布：${$('detail-owner').textContent}`;
+      $('detail-time').textContent = `${node.id} · 创建 ${date(node.created_at)} · 更新 ${date(node.updated_at)}`;
       renderRelations($('source-list'), incoming.get(node.id), true);
       renderRelations($('target-list'), outgoing.get(node.id), false);
     }
@@ -1023,6 +1025,10 @@
         if (!next.project || !Array.isArray(next.nodes) || !Array.isArray(next.edges) || !Array.isArray(next.runs) || !Array.isArray(next.canvases)) throw new Error('项目状态缺少画布或研究记录，请重启本地服务。');
         const initial = !state;
         state = { ...next, entries: Array.isArray(next.entries) ? next.entries : [] };
+        if (initial) {
+          page.resume(state.project.root);
+          adoptLegacyDraft();
+        }
         stateRevision++;
         indexState();
         const previousView = viewKey;
@@ -1040,7 +1046,6 @@
         renderDetails();
         renderFrontier();
         updateCompareOptions();
-        if ($('node-dialog').open && draft?.mode === 'edit' && nodeById.get(draft.id)?.updated_at !== draft.original_updated_at) $('form-draft-note').textContent = '此节点的已保存记录在编辑期间有更新。当前草稿已保留，保存将提交表单中的标题与正文。';
         $('sync-status').textContent = `已同步 ${new Date().toLocaleTimeString('zh-CN', { hour12: false })} · 每 3 秒`;
         $('sync-status').classList.remove('offline');
         message($('connection-error'), '');
@@ -1075,52 +1080,58 @@
     await refreshState();
   }
 
-  function openForm(mode, kind = 'idea', sourceIds = []) {
-    if (!state) return;
+  // A new node opens straight into its page, title selected so typing replaces the placeholder.
+  async function createNode(kind = 'idea', sourceIds = [], point = null, content = {}) {
+    if (!state || creating) return null;
     cancelConnection();
     $('canvas-dialog').close();
     $('options-dialog').close();
-    if (draft) {
-      fillForm();
-      $('form-draft-note').textContent = '已恢复尚未保存的草稿。保存或丢弃后，可以创建另一条记录。';
-      $('node-dialog').showModal();
-      return;
-    }
-    const node = mode === 'edit' ? nodeById.get(selectedId) : null;
-    draft = {
-      mode, id: node?.id || null, kind: node?.kind || kind, title: node?.title || '', body: node?.body || '',
-      status: node?.status || (['experiment', 'next'].includes(kind) ? 'proposed' : 'active'),
-      source_ids: sourceIds.filter(id => nodeById.has(id)), reason: '', canvas_id: canvasId, original_updated_at: node?.updated_at || null
-    };
-    fillForm();
-    remember();
-    $('node-dialog').showModal();
-    $('form-title').focus();
+    const sources = sourceIds.filter(id => nodeById.has(id));
+    const experiment = ['experiment', 'next'].includes(kind);
+    const payload = { kind, title: content.title?.trim() || (experiment ? '未命名实验' : '未命名想法'), body: content.body || '',
+      status: experiment ? 'proposed' : 'active', canvas_id: sources.length ? ownerId(nodeById.get(sources[0])) : canvasId, source_ids: sources };
+    pinLayout();
+    const viewport = $('graph-scroll');
+    const spot = point || { x: (viewport.clientWidth / 2 - camera.x) / camera.scale - Graph.NODE_WIDTH / 2,
+      y: (viewport.clientHeight / 2 - camera.y) / camera.scale - Graph.NODE_HEIGHT / 2 };
+    if (!point) while ([...positions.values()].some(p => Math.abs(p.x - spot.x) < Graph.NODE_WIDTH + 24 && Math.abs(p.y - spot.y) < Graph.NODE_HEIGHT + 24)) spot.y += Graph.NODE_HEIGHT + 60;
+    creating = true;
+    try {
+      const node = await api('/api/nodes', { method: 'POST', body: JSON.stringify(payload) });
+      if (node.canvas_id === canvasId && viewMode === 'flow') manualPositions.set(node.id, spot);
+      await refreshAfterWrite(node);
+      selectNode(node.id);
+      rememberView();
+      if (content.title) page.focusBody(); else page.focusTitle();
+      return node;
+    } catch (error) {
+      message($('feedback'), `未能新建：${error.message}`, true);
+      return null;
+    } finally { creating = false; }
   }
 
-  function fillForm() {
-    draft.canvas_id ||= nodeById.get(draft.source_ids?.[0])?.canvas_id || canvasId;
-    $('form-heading').textContent = draft.mode === 'edit' ? '编辑记录' : '添加节点';
-    const thoughtKind = draft.kind === 'insight' ? 'insight' : 'idea';
-    const experimentKind = draft.kind === 'next' ? 'next' : 'experiment';
-    $('form-kind').replaceChildren(new Option('想法', thoughtKind), new Option('实验', experimentKind));
-    $('form-kind').value = draft.kind;
-    $('form-kind').disabled = draft.mode === 'edit';
-    $('form-title').value = draft.title;
-    $('form-body').value = draft.body;
-    $('form-draft-note').textContent = desktop ? '草稿保留在此 App，重启后可以继续；只有保存后才会写入项目。' : '草稿保留在当前浏览器标签页；只有保存后才会写入项目。';
-    $('form-placement').textContent = `画布：${canvasById.get(draft.canvas_id)?.title || '未找到'}${draft.source_ids?.length ? ` · 来源：${draft.source_ids.map(id => nodeById.get(id)?.title || id).join('、')}` : ''}`;
-    message($('form-error'), '');
+  // An unsaved edit from the old form is kept only if the node has not changed since it was opened.
+  function adoptLegacyDraft() {
+    const legacy = saved.draft?.mode === 'edit' ? saved.draft : null;
+    const node = legacy && nodeById.get(legacy.id);
+    if (!node || node.updated_at !== legacy.original_updated_at) return;
+    if (legacy.title !== node.title || legacy.body !== node.body) page.adopt(node.id, { title: legacy.title, body: legacy.body });
   }
 
-  function captureDraft() {
-    if (!draft || saving) return;
-    const kind = $('form-kind').value;
-    if (kind !== draft.kind && draft.mode === 'create') draft.status = ['experiment', 'next'].includes(kind) ? 'proposed' : 'active';
-    draft.kind = kind;
-    draft.title = $('form-title').value;
-    draft.body = $('form-body').value;
-    remember();
+  // Words typed into a node that was deleted elsewhere before they were saved.
+  async function recoverNote(id, changes) {
+    const created = await api('/api/nodes', { method: 'POST', body: JSON.stringify({
+      kind: 'idea', title: `找回：${changes.title || '未保存的笔记'}`.slice(0, 200), body: changes.body || '',
+      canvas_id: canvasById.has(canvasId) ? canvasId : state.canvases[0]?.id }) });
+    message($('feedback'), `节点 ${id} 在保存前被删除了，未保存的内容已放进新节点「${created.title}」。`);
+    await refreshAfterWrite(created);
+  }
+
+  async function resumeDraft() {
+    const legacy = draft;
+    if (!legacy) return;
+    const node = await createNode(legacy.kind, legacy.source_ids || [], null, { title: legacy.title, body: legacy.body });
+    if (node) { draft = null; remember(); }
   }
 
   async function createCanvas(event) {
@@ -1138,58 +1149,6 @@
       switchCanvas(canvas.id);
     } catch (error) { message($('new-canvas-error'), `创建失败：${error.message}`, true); }
     finally { canvasSaving = false; $('save-canvas').disabled = $('close-new-canvas').disabled = false; }
-  }
-
-  function closeForm() {
-    if (saving) return;
-    captureDraft();
-    $('node-dialog').close();
-  }
-
-  async function saveNode(event) {
-    event.preventDefault();
-    if (saving) return;
-    captureDraft();
-    message($('form-error'), '');
-    if (!draft.title.trim()) { message($('form-error'), '请填写非空标题。', true); $('form-title').focus(); return; }
-    if (draft.mode === 'create' && draft.source_ids?.some(id => !nodeById.has(id))) {
-      message($('form-error'), '原草稿的部分来源已不存在，请保留正文后重新创建节点。', true); return;
-    }
-    const editing = draft.mode === 'edit';
-    const payload = { title: draft.title.trim(), body: draft.body };
-    if (!editing) {
-      Object.assign(payload, { kind: draft.kind, status: draft.status, canvas_id: draft.canvas_id,
-        source_ids: draft.source_ids || [], reason: draft.reason || '' });
-      if (draft.kind !== 'idea' && draft.idea_id) payload.idea_id = draft.idea_id;
-    }
-    pinLayout();
-    const viewport = $('graph-scroll');
-    const newPoint = { x: (viewport.clientWidth / 2 - camera.x) / camera.scale - Graph.NODE_WIDTH / 2,
-      y: (viewport.clientHeight / 2 - camera.y) / camera.scale - Graph.NODE_HEIGHT / 2 };
-    while ([...positions.values()].some(p => Math.abs(p.x - newPoint.x) < Graph.NODE_WIDTH + 24 && Math.abs(p.y - newPoint.y) < Graph.NODE_HEIGHT + 24)) newPoint.y += Graph.NODE_HEIGHT + 60;
-    saving = true;
-    $('node-fields').disabled = true;
-    ['save-node', 'discard-draft', 'keep-draft', 'close-form'].forEach(id => { $(id).disabled = true; });
-    $('save-node').textContent = '正在保存…';
-    try {
-      const node = await api(editing ? `/api/nodes/${encodeURIComponent(draft.id)}` : '/api/nodes', { method: editing ? 'PATCH' : 'POST', body: JSON.stringify(payload) });
-      draft = null;
-      remember();
-      $('node-dialog').close();
-      if (!editing && node.canvas_id === canvasId && viewMode === 'flow') manualPositions.set(node.id, newPoint);
-      message($('feedback'), editing ? '记录已保存。' : payload.source_ids?.length ? '节点已添加，并已连到来源。'
-        : viewMode === 'flow' ? '节点已添加。拖动下方圆点连线；选中后可调整状态。' : '节点已添加。切换到流向图可以手动连线。');
-      await refreshAfterWrite(node);
-      selectNode(node.id, true);
-      rememberView();
-    } catch (error) {
-      message($('form-error'), `保存失败：${error.message} 草稿已保留。若请求中途断开，请先刷新核对是否已写入，再决定重试。`, true);
-    } finally {
-      saving = false;
-      $('node-fields').disabled = false;
-      ['save-node', 'discard-draft', 'keep-draft', 'close-form'].forEach(id => { $(id).disabled = false; });
-      $('save-node').textContent = '保存记录';
-    }
   }
 
   async function changeNodeStatus(event) {
@@ -1384,28 +1343,52 @@
   $('close-new-canvas').addEventListener('click', () => $('new-canvas-dialog').close());
   $('new-canvas-form').addEventListener('submit', createCanvas);
   $('new-canvas-dialog').addEventListener('cancel', event => { if (canvasSaving) event.preventDefault(); });
-  $('empty-create').addEventListener('click', () => openForm('create'));
-  $('add-thought').addEventListener('click', () => openForm('create', 'idea'));
-  $('add-experiment').addEventListener('click', () => openForm('create', 'experiment'));
+  $('empty-create').addEventListener('click', () => createNode('idea'));
+  $('add-thought').addEventListener('click', () => createNode('idea'));
+  $('add-experiment').addEventListener('click', () => createNode('experiment'));
   $('switch-canvas').addEventListener('click', () => $('canvas-dialog').showModal());
   $('close-canvases').addEventListener('click', () => $('canvas-dialog').close());
   $('more-options').addEventListener('click', () => $('options-dialog').showModal());
   $('close-options').addEventListener('click', () => $('options-dialog').close());
   $('close-detail').addEventListener('click', () => { const id = selectedId; closeDetails(); nodeButtons.get(id)?.focus({ preventScroll: true }); });
   $('detail-panel').addEventListener('keydown', event => {
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      const id = selectedId;
-      closeDetails();
-      nodeButtons.get(id)?.focus({ preventScroll: true });
-    }
+    if (event.key !== 'Escape') return;
+    event.preventDefault();
+    // Esc steps back one level: full page → side panel → canvas.
+    if (page.isPage()) { page.setPageMode(false); return; }
+    const id = selectedId;
+    closeDetails();
+    nodeButtons.get(id)?.focus({ preventScroll: true });
   });
-  $('edit-node').addEventListener('click', () => openForm('edit'));
-  $('resume-draft').addEventListener('click', () => { if (draft) { fillForm(); $('node-dialog').showModal(); } });
+  $('resume-draft').addEventListener('click', resumeDraft);
   $('node-status').addEventListener('change', changeNodeStatus);
   $('detail-status-select').addEventListener('change', changeNodeStatus);
   $('delete-node-detail').addEventListener('click', requestDeletion);
-  $('edit-selected').addEventListener('click', () => openForm('edit'));
+  $('open-page').addEventListener('click', () => { page.setPageMode(true); page.focusBody(); });
+  $('node-kind').addEventListener('change', async event => {
+    const control = event.currentTarget, node = nodeById.get(selectedId);
+    if (node) await page.changeKind(node, control.value, refreshAfterWrite);
+    // Show the stored type again if the change was refused.
+    const latest = nodeById.get(selectedId);
+    if (latest) control.value = window.NodePage.category(latest.kind);
+  });
+  document.querySelectorAll('.kind-switch [data-kind]').forEach(button => button.addEventListener('click', () => {
+    const node = nodeById.get(selectedId);
+    if (node) page.changeKind(node, button.dataset.kind, refreshAfterWrite);
+  }));
+  // Double-click: a node opens as a full page; empty canvas starts a new thought there.
+  $('graph-scroll').addEventListener('dblclick', event => {
+    const target = document.elementFromPoint(event.clientX, event.clientY);
+    if (!target || target.closest('.canvas-controls, .empty-state, .node-actions, .connection-hint, .selection-actions, .thread-legend, .connection-handle')) return;
+    const id = target.closest('[data-node-id]')?.dataset.nodeId;
+    if (id) { selectNode(id); page.setPageMode(true); page.focusBody(); return; }
+    if (!state?.csrf_token || connectionSource || target.closest('.thread-label, .edge-hit')) return;
+    const rect = $('graph-scroll').getBoundingClientRect();
+    createNode('idea', [], viewMode === 'flow' ? {
+      x: (event.clientX - rect.left - camera.x) / camera.scale - Graph.NODE_WIDTH / 2,
+      y: (event.clientY - rect.top - camera.y) / camera.scale - Graph.NODE_HEIGHT / 2,
+    } : null);
+  });
   $('connect-selected').addEventListener('click', () => { beginConnection(selectedId); $('graph-scroll').focus({ preventScroll: true }); });
   $('cancel-connection').addEventListener('click', () => { cancelConnection(); renderGraph(); });
   $('delete-node').addEventListener('click', requestDeletion);
@@ -1491,23 +1474,11 @@
     spacePressed = false;
     if (gesture?.box) endGesture({ pointerId: gesture.pointerId, type: 'pointercancel' });
   });
-  document.querySelectorAll('[data-derive]').forEach(button => button.addEventListener('click', () => openForm('create', button.dataset.derive, selectedId ? [selectedId] : [])));
+  document.querySelectorAll('[data-derive]').forEach(button => button.addEventListener('click', () => createNode(button.dataset.derive, selectedId ? [selectedId] : [])));
   document.querySelectorAll('[data-view]').forEach(button => button.addEventListener('click', () => setViewMode(button.dataset.view)));
   $('toggle-frontier').addEventListener('click', () => setFrontierOpen($('frontier-panel').hidden));
   $('close-frontier').addEventListener('click', () => { setFrontierOpen(false); $('toggle-frontier').focus(); });
   document.querySelectorAll('[data-pane]').forEach(button => button.addEventListener('click', () => showPane(button.dataset.pane)));
-  $('node-form').addEventListener('submit', saveNode);
-  $('node-form').addEventListener('input', captureDraft);
-  $('form-kind').addEventListener('change', captureDraft);
-  $('close-form').addEventListener('click', closeForm);
-  $('keep-draft').addEventListener('click', closeForm);
-  $('node-dialog').addEventListener('cancel', event => { event.preventDefault(); closeForm(); });
-  $('discard-draft').addEventListener('click', () => {
-    if (saving) return;
-    draft = null;
-    remember();
-    $('node-dialog').close();
-  });
   $('search-form').addEventListener('submit', event => {
     event.preventDefault();
     if (!state) return;
@@ -1560,14 +1531,31 @@
     setDetailWidth(event.key === 'Home' ? 320 : event.key === 'End' ? 760 : detailWidth + (event.key === 'ArrowLeft' ? step : -step), true);
   });
   window.addEventListener('resize', () => setDetailWidth(detailWidth));
-  window.addEventListener('pagehide', () => { clearTimeout(pollTimer); clearTimeout(viewSaveTimer); rememberView(); });
+  window.addEventListener('pagehide', () => { page.persistNow(); clearTimeout(pollTimer); clearTimeout(viewSaveTimer); rememberView(); });
   window.addEventListener('pageshow', event => { if (event.persisted) { clearTimeout(pollTimer); poll(); } });
   new ResizeObserver(() => { if (state) applyCamera(); }).observe($('graph-scroll'));
   frontierView = window.FrontierView.create({ container: $('frontier-list'), countBadge: $('frontier-count'), onOpen: openFromFrontier });
   journalView = window.JournalView.create({
-    container: $('journal-section'), api, refresh: () => refreshAfterWrite(),
-    notify: text => message($('feedback'), text), onFork: id => openForm('create', 'idea', [id]),
+    container: $('journal-section'), prompts: $('prompt-section'), api, refresh: () => refreshAfterWrite(),
+    notify: text => message($('feedback'), text), onFork: id => createNode('idea', [id]),
   });
+  page = window.NodePage.create({
+    title: $('detail-title'), kindButtons: [...document.querySelectorAll('.kind-switch [data-kind]')],
+    editorRoot: $('note-editor'), saveState: $('save-state'), pageToggle: $('toggle-page'), api,
+    notify: (text, error = false) => message($('feedback'), text, error),
+    onEscape: () => $('detail-panel').focus({ preventScroll: true }),
+    onLost: recoverNote,
+    // Reflect an autosave locally; the next poll confirms it.
+    onSaved: node => {
+      const index = state.nodes.findIndex(item => item.id === node.id);
+      if (index < 0) return;
+      state.nodes[index] = node;
+      indexState();
+      renderGraph();
+      renderDetails();
+    },
+  });
+
   let frontierOpen = true;
   try { frontierOpen = localStorage.getItem(FRONTIER_KEY) !== '0'; } catch { /* Optional view preference. */ }
   setFrontierOpen(frontierOpen && !window.matchMedia('(max-width: 900px)').matches, false);
