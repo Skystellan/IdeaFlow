@@ -27,6 +27,7 @@ jobs:
         run: python -m unittest discover -s tests -p 'test_idea_workbench*.py' -v
       - name: Canvas syntax and behavior tests
         run: |
-          node --check idea_workbench/static/app.js
+          for script in idea_workbench/static/*.js; do node --check "$script"; done
           node tests/test_idea_workbench_layout.cjs
           node tests/test_idea_workbench_gestures.cjs
+          node tests/test_idea_workbench_threads.cjs

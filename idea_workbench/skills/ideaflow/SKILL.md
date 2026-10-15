@@ -18,6 +18,17 @@ Run `python3 -m idea_workbench --help` from the checkout containing the `idea_wo
 - Read legacy `insight` as a thought and `next` as a planned test; do not bulk rewrite historical nodes. Runs require kind `experiment`, so executing a legacy `next` requires a linked experiment node (reuse one if it already exists).
 - Pass IDs explicitly; do not rely on the app's current selection across parallel chats. Use `node --canvas CANVAS_ID --kind KIND ...` to place a new node, especially a disconnected one. Without `--canvas`, a node inherits its sources' canvas or defaults to `canvas-main`.
 
+## Keep the researcher's words when they are said
+
+The journal is append-only and separate from the graph. Titles, bodies, grouping and links may be reorganized at any time; journal entries cannot be edited or deleted. Record there only what cannot be reconstructed afterwards: why something is tried, what was expected, the first reaction to a result, and decisions on proposals. Everything derivable (what ran, parameters, code, metrics, titles) belongs to runs and nodes.
+
+- Every recorded text names its author with `--by human` or `--by agent`. `human` means the researcher's own words copied from their message. Quote them verbatim; you may drop unrelated surrounding sentences but never paraphrase, translate, tidy or complete them. Your own explanations are always `--by agent`.
+- When the researcher asks you to run something, pass their stated reason as `run --why TEXT --by human` and any stated expectation as `--expect TEXT`. If they gave no reason or expectation, leave the flag out. Do not infer one, and do not attribute your rationale to them. A run you start on your own initiative uses `--by agent`.
+- Propose next experiments with `propose --title TITLE --source NODE_ID --why RATIONALE` instead of creating and starting them; the rationale is recorded as yours. A proposal waits in the app's frontier; a status edit cannot approve it, only `decide` can. When the researcher approves or declines in chat, record it with `decide NODE_ID --approve --text "THEIR WORDS"` (optionally `--expect "THEIR WORDS"`) or `--decline`. Never decide on their behalf. Start the run only after an approval.
+- After a run finishes, show the observed result and ask for the researcher's first reaction before interpreting it. Record it with `react RUN_ID --outcome expected|surprised|mixed --text "THEIR WORDS"`; reactions are always the researcher's, so never react on your own judgement. Add your interpretation separately with `note NODE_ID --by agent --text ...`. A surprise is a good place to propose a forked question.
+- `note NODE_ID --text TEXT --by human|agent [--kind intent|expectation|note] [--run RUN_ID]` appends anything else worth keeping verbatim. An intent or expectation tied to `--run` is accepted only before that run finishes; later thoughts are notes. `journal [NODE_ID]` reads entries; `frontier [--canvas ID]` lists proposals awaiting a decision, finished runs awaiting a reaction, running work, recent surprises and planned steps.
+- When reconstructing history after the fact, create nodes and runs, but write no `--by human` intents or expectations unless you are quoting what the researcher wrote at the time. Missing intent stays missing; the app shows that gap honestly.
+
 ## Connect records and update status
 
 Use `--source NODE_ID` when creating a node to connect it to its exact source; repeat it for a synthesis of multiple sources on the same canvas. Nodes may also be created without connections, then connected with `link --source SOURCE_ID --target TARGET_ID --reason TEXT`. `unlink --source SOURCE_ID --target TARGET_ID` removes only that connection. Links express provenance or a proposed direction, not proof; self-links, cycles and cross-canvas links are not allowed. `--idea IDEA_ID` sets legacy branch ownership when needed for a synthesis; it does not select a canvas.
@@ -33,7 +44,7 @@ Node state and run state are independent. Finishing a run does not automatically
 
 ## Capture a real experiment
 
-Use `run --experiment ID --include SOURCE --params-file PARAMETERS.json -- COMMAND...`. Include the script and local modules it needs; paths are relative to the registered project root. The runner executes the selected source snapshot and stores logs, Git metadata, and source files without committing or staging the user's code.
+Use `run --experiment ID --include SOURCE --params-file PARAMETERS.json [--why TEXT --expect TEXT --by human|agent] -- COMMAND...`. Include the script and local modules it needs; paths are relative to the registered project root. The runner executes the selected source snapshot and stores logs, Git metadata, and source files without committing or staging the user's code.
 
 Runs detach by default; `--wait` waits for small experiments. Keep the returned run ID and inspect `status RUN_ID`. Closing the web page does not stop the worker. A process running successfully does not establish that a hypothesis is correct.
 
@@ -53,7 +64,7 @@ For an already completed experiment, use `import-run` with its metrics. Imported
 
 Read the actual run records and relevant logs. Use `compare LEFT_RUN RIGHT_RUN` when conditions are meaningfully comparable. Missing metrics, execution failures and scientific negative results are different outcomes.
 
-Record observations, tentative explanations and alternatives separately in the body, cite the run IDs, and identify agent-authored interpretations as drafts. Update the relevant existing record when the result refines it. Add an `idea` linked to its experiment(s) when a distinct finding or branch deserves its own node; add a proposed `experiment` for a concrete next test, explaining why it helps and how outcomes would change the direction. Do not mechanically create two more nodes after every run. Use `--body-file` for substantial prose.
+Record observations, tentative explanations and alternatives separately in the body, cite the run IDs, and identify agent-authored interpretations as drafts. Update the relevant existing record when the result refines it. Add an `idea` linked to its experiment(s) when a distinct finding or branch deserves its own node; use `propose` for a concrete next test, explaining in `--why` why it helps and how outcomes would change the direction. Do not mechanically create two more nodes after every run. Use `--body-file` for substantial prose.
 
 The researcher can revise drafts, pause a branch or continue immediately; this workflow adds no approval gate to already authorized work. `edit` preserves prior text. Do not delete historical evidence merely to tidy the graph.
 

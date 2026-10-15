@@ -54,6 +54,11 @@
   const selectedNodes = new Set(), selectedEdges = new Set();
   const edgeKey = edge => JSON.stringify([edge.source, edge.target]);
   let pendingDeletion = null;
+  // Thread map is the default view; the card flow graph remains available for editing links.
+  const VIEW_KEY = 'ideaflow-view-mode', FRONTIER_KEY = 'ideaflow-frontier-open', READABLE_SCALE = .72;
+  let viewMode = 'threads', threadBounds = null, frontierView = null, journalView = null;
+  let cameras = {}; // Saved camera per view on this canvas: { flow, threads }.
+  try { viewMode = localStorage.getItem(VIEW_KEY) === 'flow' ? 'flow' : 'threads'; } catch { /* Optional view preference. */ }
 
   function el(tag, className, text) {
     const element = document.createElement(tag);
@@ -156,16 +161,19 @@
     viewKey = key;
     manualPositions = new Map();
     camera = { x: 0, y: 0, scale: 1 };
+    cameras = {};
     viewRestored = false;
+    const valid = view => view && ['x', 'y', 'scale'].every(key => Number.isFinite(view[key]));
     try {
       const data = JSON.parse(localStorage.getItem(key) || '{}');
       for (const [id, point] of Object.entries(data.positions || {})) {
         if (nodeById.has(id) && Number.isFinite(point?.x) && Number.isFinite(point?.y)) manualPositions.set(id, point);
       }
-      if (data.camera && ['x', 'y', 'scale'].every(key => Number.isFinite(data.camera[key]))) {
-        camera = { ...data.camera, scale: Math.max(.08, Math.min(2.5, data.camera.scale)) };
-        viewRestored = true;
+      // `camera` keeps its original meaning (the card flow view) so existing saved views still load.
+      for (const [mode, view] of [['flow', data.camera], ['threads', data.threadCamera]]) {
+        if (valid(view)) cameras[mode] = { ...view, scale: Math.max(.08, Math.min(2.5, view.scale)) };
       }
+      if (cameras[viewMode]) { camera = { ...cameras[viewMode] }; viewRestored = true; }
     } catch { /* An unavailable or obsolete local view never blocks research records. */ }
     graphSignature = '';
   }
@@ -173,7 +181,8 @@
   function rememberView() {
     if (!viewKey) return;
     try {
-      localStorage.setItem(viewKey, JSON.stringify({ positions: Object.fromEntries(manualPositions), camera }));
+      cameras = { ...cameras, [viewMode]: { ...camera } };
+      localStorage.setItem(viewKey, JSON.stringify({ positions: Object.fromEntries(manualPositions), camera: cameras.flow, threadCamera: cameras.threads }));
       localStorage.setItem(`ideaflow-canvases-v2:${state.project.root}:active`, canvasId);
       $('layout-status').textContent = desktop ? '布局已保存在此 App' : '布局已保存在此浏览器';
     } catch { $('layout-status').textContent = '浏览器存储不可用，布局仅保留到页面关闭'; }
@@ -227,7 +236,8 @@
     loadGraphView();
     renderCanvases();
     renderGraph();
-    if (!viewRestored) fitGraph();
+    renderFrontier();
+    if (!viewRestored) fitGraph(readableScale());
     rememberView();
   }
 
@@ -244,7 +254,9 @@
 
   function positionNodeActions() {
     const node = nodeById.get(selectedId), point = positions.get(selectedId), toolbar = $('node-actions');
-    toolbar.hidden = !node || !point || Boolean(connectionSource) || Boolean(selectedNodes.size || selectedEdges.size);
+    // Thread beads sit one lane apart, so the floating toolbar would cover the next lane;
+    // the detail panel carries the same status control there.
+    toolbar.hidden = !node || !point || viewMode === 'threads' || Boolean(connectionSource) || Boolean(selectedNodes.size || selectedEdges.size);
     if (toolbar.hidden) return;
     const statusControl = $('node-status');
     // Reassigning value/disabled closes Chromium's open native select, even when unchanged.
@@ -263,6 +275,7 @@
   }
 
   function pinLayout() {
+    if (viewMode !== 'flow') return; // Thread beads have no saved card positions.
     for (const [id, point] of positions) manualPositions.set(id, { x: point.x, y: point.y });
   }
 
@@ -464,12 +477,15 @@
     viewSaveTimer = setTimeout(rememberView, 180);
   }
 
-  function fitGraph() {
+  function readableScale() { return viewMode === 'threads' ? READABLE_SCALE : .08; }
+
+  // A minimum scale keeps thread labels legible; wide maps then start at their left edge.
+  function fitGraph(minimum = .08) {
     if (!positions.size) return;
-    const bounds = Graph.bounds(positions), viewport = $('graph-scroll');
-    camera.scale = Math.max(.08, Math.min(1, (viewport.clientWidth - 80) / bounds.width, (viewport.clientHeight - 160) / bounds.height));
-    camera.x = (viewport.clientWidth - bounds.width * camera.scale) / 2 - bounds.x * camera.scale;
-    camera.y = (viewport.clientHeight - bounds.height * camera.scale) / 2 - bounds.y * camera.scale;
+    const bounds = viewMode === 'threads' && threadBounds ? threadBounds : Graph.bounds(positions), viewport = $('graph-scroll');
+    camera.scale = Math.max(.08, minimum, Math.min(1, (viewport.clientWidth - 80) / bounds.width, (viewport.clientHeight - 160) / bounds.height));
+    camera.x = Math.max(24, (viewport.clientWidth - bounds.width * camera.scale) / 2) - bounds.x * camera.scale;
+    camera.y = Math.max(72, (viewport.clientHeight - bounds.height * camera.scale) / 2) - bounds.y * camera.scale;
     applyCamera();
     rememberView();
   }
@@ -488,9 +504,10 @@
 
   function renderGraph() {
     if (gesture || connectionSource || edgeSaving) return; // Keep nodes stable while drawing or saving a connection.
-    const signature = JSON.stringify([state.nodes, state.edges, state.runs.map(run => [run.id, run.status]), canvasId]);
+    const signature = JSON.stringify([state.nodes, state.edges, state.runs.map(run => [run.id, run.status]), state.entries.map(entry => entry.id), canvasId, viewMode]);
     if (signature === graphSignature) { highlightGraph(); return; }
     graphSignature = signature;
+    if (viewMode === 'threads') { renderThreadGraph(); return; }
     const focusedId = document.activeElement?.dataset.nodeId;
     const nodes = graphNodes(), ids = new Set(nodes.map(node => node.id));
     visibleEdges = state.edges.filter(edge => ids.has(edge.source) && ids.has(edge.target));
@@ -579,16 +596,82 @@
     }
     $('edge-paths').replaceChildren(paths);
     drawEdges();
-    $('graph-canvas').style.width = `${layout.width}px`;
-    $('graph-canvas').style.height = `${layout.height}px`;
-    $('graph-edges').setAttribute('width', layout.width);
-    $('graph-edges').setAttribute('height', layout.height);
-    $('empty-graph').hidden = nodes.length > 0;
-    $('graph-canvas').hidden = nodes.length === 0;
-    $('graph-summary').textContent = `当前画布 ${nodes.length} 个节点 · 项目共 ${state.canvases.length} 个画布 · ${state.runs.length} 次运行`;
+    sizeCanvas(layout.width, layout.height, nodes.length);
     highlightGraph();
     applyCamera();
     if (focusedId) nodeButtons.get(focusedId)?.focus({ preventScroll: true });
+  }
+
+  function sizeCanvas(width, height, count) {
+    $('graph-canvas').style.width = `${width}px`;
+    $('graph-canvas').style.height = `${height}px`;
+    $('graph-edges').setAttribute('width', width);
+    $('graph-edges').setAttribute('height', height);
+    $('empty-graph').hidden = count > 0;
+    $('graph-canvas').hidden = count === 0;
+    $('graph-summary').textContent = `当前画布 ${count} 个节点 · 项目共 ${state.canvases.length} 个画布 · ${state.runs.length} 次运行`;
+  }
+
+  function renderThreadGraph() {
+    const focusedId = document.activeElement?.dataset.nodeId;
+    const nodes = graphNodes(), ids = new Set(nodes.map(node => node.id));
+    visibleEdges = state.edges.filter(edge => ids.has(edge.source) && ids.has(edge.target));
+    selectedNodes.clear();
+    selectedEdges.clear();
+    edgePaths.length = 0;
+    const view = window.ThreadsView.render({
+      nodes, edges: visibleEdges, entries: state.entries, runs: state.runs.filter(run => ids.has(run.experiment_id)),
+      nodeLayer: $('graph-nodes'), edgeLayer: $('edge-paths'), onSelect: id => selectNode(id),
+    });
+    nodeButtons.clear();
+    view.buttons.forEach((button, id) => nodeButtons.set(id, button));
+    // Camera helpers expect card corners; centre an imaginary card on each bead.
+    positions = new Map([...view.centers].map(([id, point]) => [id, { x: point.x - Graph.NODE_WIDTH / 2, y: point.y - Graph.NODE_HEIGHT / 2 }]));
+    threadBounds = { x: 0, y: 0, width: view.width, height: view.height };
+    message($('graph-warning'), view.cyclic ? '记录中存在循环来源，已展开显示；请检查后端来源关系。' : '', true);
+    sizeCanvas(view.width, view.height, nodes.length);
+    highlightGraph();
+    applyCamera();
+    if (focusedId) nodeButtons.get(focusedId)?.focus({ preventScroll: true });
+  }
+
+  function applyViewMode() {
+    $('graph-scroll').classList.toggle('is-threads', viewMode === 'threads');
+    $('thread-legend').hidden = viewMode !== 'threads';
+    document.querySelectorAll('[data-view]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.view === viewMode)));
+  }
+
+  function setViewMode(mode) {
+    if (mode === viewMode || edgeSaving || !state) return;
+    cancelConnection();
+    clearSelection();
+    rememberView();
+    viewMode = mode;
+    try { localStorage.setItem(VIEW_KEY, mode); } catch { /* Optional view preference. */ }
+    applyViewMode();
+    graphSignature = '';
+    renderGraph();
+    if (cameras[mode]) { camera = { ...cameras[mode] }; applyCamera(); }
+    else fitGraph(readableScale());
+  }
+
+  function setFrontierOpen(open, persist = true) {
+    $('frontier-panel').hidden = !open;
+    $('toggle-frontier').setAttribute('aria-expanded', String(open));
+    if (persist) {
+      try { localStorage.setItem(FRONTIER_KEY, open ? '1' : '0'); } catch { /* Optional view preference. */ }
+    }
+  }
+
+  function renderFrontier() {
+    if (state && frontierView) frontierView.render(state.frontier, canvasById, canvasId);
+  }
+
+  function openFromFrontier(id, focus) {
+    if (window.matchMedia('(max-width: 900px)').matches) setFrontierOpen(false, false);
+    selectNode(id, true);
+    showPane('record');
+    journalView.focus(focus);
   }
 
   function highlightGraph() {
@@ -651,7 +734,7 @@
   }
 
   function startGesture(event) {
-    if (event.target.closest('.canvas-controls, .empty-state, .node-actions, .connection-hint, .selection-actions') || !state?.nodes.length) return;
+    if (event.target.closest('.canvas-controls, .empty-state, .node-actions, .connection-hint, .selection-actions, .thread-bead, .thread-label, .thread-legend') || !state?.nodes.length) return;
     if (event.target.closest('.connection-handle') && !event.metaKey) return;
     if (event.button !== 0 && event.button !== 1) return;
     if (gesture || edgeSaving) return;
@@ -659,7 +742,7 @@
     const node = event.target.closest('.node-group')?.querySelector('.graph-node');
     const edge = event.target.closest('.edge-hit')?.dataset.edgeKey;
     const id = event.button === 0 && !spacePressed ? node?.dataset.nodeId : null;
-    if (event.metaKey && event.button === 0) {
+    if (event.metaKey && event.button === 0 && viewMode === 'flow') {
       cancelConnection();
       if (selectedId) selectedNodes.add(selectedId);
       closeDetails();
@@ -828,6 +911,7 @@
     $('detail-panel').hidden = $('detail-resizer').hidden = !node;
     $('empty-detail').hidden = Boolean(node);
     $('node-detail').hidden = !node;
+    journalView?.render(node || null, state);
     if (!node) return;
     const signature = JSON.stringify([node, incoming.get(node.id).map(edge => [edge, nodeById.get(edge.source)]), outgoing.get(node.id).map(edge => [edge, nodeById.get(edge.target)]), canvasById.get(ownerId(node))]);
     if (signature !== detailSignature) {
@@ -843,13 +927,14 @@
       renderRelations($('source-list'), incoming.get(node.id), true);
       renderRelations($('target-list'), outgoing.get(node.id), false);
     }
+    syncDetailStatus();
     renderRuns();
     if (contextVersion && contextVersion !== evidenceSignature()) message($('context-message'), '研究记录或运行已更新。下方保留上次生成的内容，请重新生成以获取最新上下文。');
   }
 
   function evidenceSignature() {
     const upstream = ancestors(selectedId);
-    return JSON.stringify([state.nodes.filter(node => upstream.has(node.id)), state.edges.filter(edge => upstream.has(edge.target)), state.runs.filter(run => upstream.has(run.experiment_id))]);
+    return JSON.stringify([state.nodes.filter(node => upstream.has(node.id)), state.edges.filter(edge => upstream.has(edge.target)), state.runs.filter(run => upstream.has(run.experiment_id)), state.entries.filter(entry => upstream.has(entry.node_id))]);
   }
 
   function fillSelect(select, items, placeholder, preferred = select.value) {
@@ -937,7 +1022,7 @@
         const next = await api('/api/state');
         if (!next.project || !Array.isArray(next.nodes) || !Array.isArray(next.edges) || !Array.isArray(next.runs) || !Array.isArray(next.canvases)) throw new Error('项目状态缺少画布或研究记录，请重启本地服务。');
         const initial = !state;
-        state = next;
+        state = { ...next, entries: Array.isArray(next.entries) ? next.entries : [] };
         stateRevision++;
         indexState();
         const previousView = viewKey;
@@ -953,13 +1038,14 @@
         $('open-compare').disabled = state.runs.length < 2;
         renderGraph();
         renderDetails();
+        renderFrontier();
         updateCompareOptions();
         if ($('node-dialog').open && draft?.mode === 'edit' && nodeById.get(draft.id)?.updated_at !== draft.original_updated_at) $('form-draft-note').textContent = '此节点的已保存记录在编辑期间有更新。当前草稿已保留，保存将提交表单中的标题与正文。';
         $('sync-status').textContent = `已同步 ${new Date().toLocaleTimeString('zh-CN', { hour12: false })} · 每 3 秒`;
         $('sync-status').classList.remove('offline');
         message($('connection-error'), '');
         remember();
-        if ((initial || previousView !== viewKey) && !viewRestored) fitGraph();
+        if ((initial || previousView !== viewKey) && !viewRestored) fitGraph(readableScale());
         return true;
       } catch (error) {
         $('sync-status').textContent = '连接中断 · 自动重试';
@@ -989,7 +1075,7 @@
     await refreshState();
   }
 
-  function openForm(mode, kind = 'idea') {
+  function openForm(mode, kind = 'idea', sourceIds = []) {
     if (!state) return;
     cancelConnection();
     $('canvas-dialog').close();
@@ -1004,7 +1090,7 @@
     draft = {
       mode, id: node?.id || null, kind: node?.kind || kind, title: node?.title || '', body: node?.body || '',
       status: node?.status || (['experiment', 'next'].includes(kind) ? 'proposed' : 'active'),
-      source_ids: [], reason: '', canvas_id: canvasId, original_updated_at: node?.updated_at || null
+      source_ids: sourceIds.filter(id => nodeById.has(id)), reason: '', canvas_id: canvasId, original_updated_at: node?.updated_at || null
     };
     fillForm();
     remember();
@@ -1023,7 +1109,7 @@
     $('form-title').value = draft.title;
     $('form-body').value = draft.body;
     $('form-draft-note').textContent = desktop ? '草稿保留在此 App，重启后可以继续；只有保存后才会写入项目。' : '草稿保留在当前浏览器标签页；只有保存后才会写入项目。';
-    $('form-placement').textContent = `画布：${canvasById.get(draft.canvas_id)?.title || '未找到'}${draft.source_ids?.length ? ' · 已保留原草稿的来源关系' : ''}`;
+    $('form-placement').textContent = `画布：${canvasById.get(draft.canvas_id)?.title || '未找到'}${draft.source_ids?.length ? ` · 来源：${draft.source_ids.map(id => nodeById.get(id)?.title || id).join('、')}` : ''}`;
     message($('form-error'), '');
   }
 
@@ -1090,8 +1176,9 @@
       draft = null;
       remember();
       $('node-dialog').close();
-      if (!editing && node.canvas_id === canvasId) manualPositions.set(node.id, newPoint);
-      message($('feedback'), editing ? '记录已保存。' : '节点已添加。拖动下方圆点连线；选中后可调整状态。');
+      if (!editing && node.canvas_id === canvasId && viewMode === 'flow') manualPositions.set(node.id, newPoint);
+      message($('feedback'), editing ? '记录已保存。' : payload.source_ids?.length ? '节点已添加，并已连到来源。'
+        : viewMode === 'flow' ? '节点已添加。拖动下方圆点连线；选中后可调整状态。' : '节点已添加。切换到流向图可以手动连线。');
       await refreshAfterWrite(node);
       selectNode(node.id, true);
       rememberView();
@@ -1105,16 +1192,28 @@
     }
   }
 
-  async function changeNodeStatus() {
-    const node = nodeById.get(selectedId), status = $('node-status').value;
+  async function changeNodeStatus(event) {
+    const node = nodeById.get(selectedId), status = event.currentTarget.value;
     if (!node || statusSaving || status === node.status) return;
+    if (state.frontier?.awaiting_decision?.some(item => item.node_id === node.id)) {
+      event.currentTarget.value = node.status;
+      message($('feedback'), '这是 Agent 的提议：请在详情里写一句理由后批准，或选择暂不做。');
+      showPane('record');
+      journalView.focus('decision');
+      return;
+    }
     statusSaving = true;
-    $('node-status').disabled = true;
+    $('node-status').disabled = $('detail-status-select').disabled = true;
     try {
       const updated = await api(`/api/nodes/${encodeURIComponent(node.id)}`, { method: 'PATCH', body: JSON.stringify({ status }) });
       await refreshAfterWrite(updated);
     } catch (error) { message($('feedback'), `状态未保存：${error.message}`, true); }
-    finally { statusSaving = false; positionNodeActions(); }
+    finally { statusSaving = false; $('detail-status-select').disabled = false; positionNodeActions(); syncDetailStatus(); }
+  }
+
+  function syncDetailStatus() {
+    const node = nodeById.get(selectedId), control = $('detail-status-select');
+    if (node && !statusSaving && document.activeElement !== control && control.value !== node.status) control.value = node.status;
   }
 
   async function generateContext() {
@@ -1304,6 +1403,8 @@
   $('edit-node').addEventListener('click', () => openForm('edit'));
   $('resume-draft').addEventListener('click', () => { if (draft) { fillForm(); $('node-dialog').showModal(); } });
   $('node-status').addEventListener('change', changeNodeStatus);
+  $('detail-status-select').addEventListener('change', changeNodeStatus);
+  $('delete-node-detail').addEventListener('click', requestDeletion);
   $('edit-selected').addEventListener('click', () => openForm('edit'));
   $('connect-selected').addEventListener('click', () => { beginConnection(selectedId); $('graph-scroll').focus({ preventScroll: true }); });
   $('cancel-connection').addEventListener('click', () => { cancelConnection(); renderGraph(); });
@@ -1318,9 +1419,10 @@
   $('zoom-in').addEventListener('click', () => zoomAt(camera.scale * 1.3));
   $('zoom-out').addEventListener('click', () => zoomAt(camera.scale / 1.3));
   $('zoom-reset').addEventListener('click', () => zoomAt(1));
-  $('fit-graph').addEventListener('click', fitGraph);
+  $('fit-graph').addEventListener('click', () => fitGraph());
   $('auto-layout').addEventListener('click', () => {
     $('options-dialog').close();
+    if (viewMode === 'threads') { fitGraph(); return; } // The thread map is always laid out automatically.
     for (const id of positions.keys()) manualPositions.delete(id);
     graphSignature = '';
     renderGraph();
@@ -1389,7 +1491,10 @@
     spacePressed = false;
     if (gesture?.box) endGesture({ pointerId: gesture.pointerId, type: 'pointercancel' });
   });
-  document.querySelectorAll('[data-derive]').forEach(button => button.addEventListener('click', () => openForm('create', button.dataset.derive)));
+  document.querySelectorAll('[data-derive]').forEach(button => button.addEventListener('click', () => openForm('create', button.dataset.derive, selectedId ? [selectedId] : [])));
+  document.querySelectorAll('[data-view]').forEach(button => button.addEventListener('click', () => setViewMode(button.dataset.view)));
+  $('toggle-frontier').addEventListener('click', () => setFrontierOpen($('frontier-panel').hidden));
+  $('close-frontier').addEventListener('click', () => { setFrontierOpen(false); $('toggle-frontier').focus(); });
   document.querySelectorAll('[data-pane]').forEach(button => button.addEventListener('click', () => showPane(button.dataset.pane)));
   $('node-form').addEventListener('submit', saveNode);
   $('node-form').addEventListener('input', captureDraft);
@@ -1458,6 +1563,15 @@
   window.addEventListener('pagehide', () => { clearTimeout(pollTimer); clearTimeout(viewSaveTimer); rememberView(); });
   window.addEventListener('pageshow', event => { if (event.persisted) { clearTimeout(pollTimer); poll(); } });
   new ResizeObserver(() => { if (state) applyCamera(); }).observe($('graph-scroll'));
+  frontierView = window.FrontierView.create({ container: $('frontier-list'), countBadge: $('frontier-count'), onOpen: openFromFrontier });
+  journalView = window.JournalView.create({
+    container: $('journal-section'), api, refresh: () => refreshAfterWrite(),
+    notify: text => message($('feedback'), text), onFork: id => openForm('create', 'idea', [id]),
+  });
+  let frontierOpen = true;
+  try { frontierOpen = localStorage.getItem(FRONTIER_KEY) !== '0'; } catch { /* Optional view preference. */ }
+  setFrontierOpen(frontierOpen && !window.matchMedia('(max-width: 900px)').matches, false);
+  applyViewMode();
   setDetailWidth(detailWidth);
   remember();
   poll();

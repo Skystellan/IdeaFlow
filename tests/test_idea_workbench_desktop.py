@@ -15,6 +15,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from idea_workbench.desktop_backend import open_store
+from idea_workbench.journal import frontier
 from idea_workbench.store import Store
 
 
@@ -127,6 +128,7 @@ class DesktopTests(unittest.TestCase):
         self.assertEqual(ready["project"], store.state()["project"])
         state = self.state(ready)
         self.assertTrue(state.pop("csrf_token"))
+        self.assertEqual(state.pop("frontier"), frontier(store.state()))
         self.assertEqual(state, store.state())
         process.stdin.close()
         self.assert_stopped(process, ready)

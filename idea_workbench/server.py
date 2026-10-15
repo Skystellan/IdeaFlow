@@ -9,10 +9,26 @@ from pathlib import Path
 from socketserver import TCPServer
 from urllib.parse import parse_qs, urlsplit
 
+from .journal import frontier
 from .runner import artifact
 from .store import encode
 
 STATIC = Path(__file__).parent / "static"
+STATIC_FILES = {
+    "/": ("index.html", "text/html"),
+    "/static/style.css": ("style.css", "text/css"),
+    **{f"/static/{name}": (name, "text/javascript") for name in (
+        "app.js", "graph-layout.js", "thread-layout.js", "journal-model.js",
+        "threads-view.js", "journal-view.js", "frontier-view.js")},
+}
+
+
+def only(data, allowed):
+    """App writes are always the researcher's own words; clients cannot choose an author or source."""
+    unknown = set(data) - allowed
+    if unknown:
+        raise ValueError(f"Unexpected fields: {', '.join(sorted(unknown))}")
+    return data
 
 
 class LoopbackHTTPServer(ThreadingHTTPServer):
@@ -92,13 +108,23 @@ def create_server(store, port=8770):
                         self.reply(store.delete_selection(**data))
                     elif self.command == "PATCH" and url.path.startswith("/api/nodes/"):
                         self.reply(store.edit_node(url.path.removeprefix("/api/nodes/"), **data))
+                    elif self.command == "POST" and url.path == "/api/entries":
+                        entry = only(data, {"node_id", "kind", "text", "run_id"})
+                        self.reply(store.add_entry(**entry, author="human", via="app"), 201)
+                    elif self.command == "POST" and url.path == "/api/decisions":
+                        decision = only(data, {"node_id", "decision", "text", "expectation"})
+                        self.reply(store.decide(**decision, via="app"))
+                    elif self.command == "POST" and url.path == "/api/reactions":
+                        reaction = only(data, {"run_id", "outcome", "text"})
+                        self.reply(store.react(**reaction, via="app"), 201)
                     else:
                         self.reply({"error": "Unknown endpoint"}, 404)
-                elif url.path in {"/", "/static/app.js", "/static/graph-layout.js", "/static/style.css"}:
-                    name, mime = {"/": ("index.html", "text/html"), "/static/app.js": ("app.js", "text/javascript"), "/static/graph-layout.js": ("graph-layout.js", "text/javascript"), "/static/style.css": ("style.css", "text/css")}[url.path]
+                elif url.path in STATIC_FILES:
+                    name, mime = STATIC_FILES[url.path]
                     self.reply((STATIC / name).read_bytes(), content_type=mime + "; charset=utf-8")
                 elif url.path == "/api/state":
-                    self.reply(store.state() | {"csrf_token": token})
+                    state = store.state()
+                    self.reply(state | {"frontier": frontier(state), "csrf_token": token})
                 elif url.path == "/api/context":
                     self.reply(store.context(param("node")))
                 elif url.path == "/api/run":

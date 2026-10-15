@@ -7,6 +7,11 @@
   <title>IdeaFlow</title>
   <link rel="stylesheet" href="/static/style.css">
   <script src="/static/graph-layout.js" defer></script>
+  <script src="/static/thread-layout.js" defer></script>
+  <script src="/static/journal-model.js" defer></script>
+  <script src="/static/threads-view.js" defer></script>
+  <script src="/static/journal-view.js" defer></script>
+  <script src="/static/frontier-view.js" defer></script>
   <script src="/static/app.js" defer></script>
 </head>
 <body>
@@ -18,10 +23,18 @@
   </div>
 
   <main class="workspace">
+    <aside id="frontier-panel" class="frontier-panel" aria-labelledby="frontier-heading">
+      <div class="frontier-heading"><h2 id="frontier-heading">下一步</h2><button id="close-frontier" class="quiet" type="button" aria-label="收起下一步面板" title="收起">✕</button></div>
+      <p class="muted small">等你决定的提议、等你回应的结果，以及最近的意外。</p>
+      <div id="frontier-list"></div>
+    </aside>
     <section class="map-panel" aria-labelledby="map-heading">
       <h1 id="map-heading" class="sr-only">研究画布</h1>
       <div class="canvas-launchers">
-        <button id="switch-canvas" type="button" aria-haspopup="dialog" aria-controls="canvas-dialog">切换画布 <span id="canvas-title">研究画布</span></button>
+        <div class="canvas-start">
+          <button id="toggle-frontier" type="button" aria-controls="frontier-panel" aria-expanded="true">下一步 <span id="frontier-count" class="count-badge" hidden></span></button>
+          <button id="switch-canvas" type="button" aria-haspopup="dialog" aria-controls="canvas-dialog">切换画布 <span id="canvas-title">研究画布</span></button>
+        </div>
         <div class="canvas-actions">
           <button id="add-thought" type="button" disabled>想法</button>
           <button id="add-experiment" type="button" disabled>实验</button>
@@ -58,7 +71,18 @@
           <button id="zoom-in" type="button" aria-label="放大画布" title="放大（＋）">＋</button>
           <span class="control-divider" aria-hidden="true"></span>
           <button id="fit-graph" type="button" title="适应全部可见节点（0）">适应画布</button>
+          <span class="control-divider" aria-hidden="true"></span>
+          <span class="view-switch" role="group" aria-label="视图">
+            <button type="button" data-view="threads" aria-pressed="true" title="每个研究问题一条横线，实验是线上的圆点">线程图</button>
+            <button type="button" data-view="flow" aria-pressed="false" title="原有的卡片流向图，可拖动和连线">流向图</button>
+          </span>
           <span class="selection-tip">⌘ 拖动框选</span>
+        </div>
+        <div id="thread-legend" class="thread-legend" aria-label="线程图图例" hidden>
+          <span><i data-state="expected"></i>符合预期</span><span><i data-state="surprised"></i>与预期不符</span>
+          <span><i data-state="mixed"></i>结果混合</span><span><i data-state="plain"></i>未记录反应</span>
+          <span><i data-state="awaiting"></i>Agent 提议，等你决定</span><span><i data-state="running"></i>运行中</span>
+          <span><i data-state="thought"></i>想法</span>
         </div>
         <div id="empty-graph" class="empty-state" hidden>
           <span class="empty-symbol" aria-hidden="true">↗</span>
@@ -79,7 +103,7 @@
           <h2 id="detail-title"></h2>
           <p id="detail-id" class="muted mono"></p>
           <p id="detail-owner" class="muted"></p>
-          <div class="action-row"><button id="edit-node" type="button">编辑记录</button></div>
+          <div class="action-row"><button id="edit-node" type="button">编辑记录</button><label class="sr-only" for="detail-status-select">节点状态</label><select id="detail-status-select" class="detail-status-select"><option value="active">进行中</option><option value="proposed">待验证</option><option value="done">已完成</option><option value="paused">已暂停</option></select><button id="delete-node-detail" type="button" class="quiet danger">删除</button></div>
           <p id="node-action-error" class="notice error" role="alert" hidden></p>
         </div>
         <div class="detail-tabs" role="group" aria-label="详情视图">
@@ -88,11 +112,12 @@
           <button type="button" data-pane="context" aria-pressed="false" aria-controls="pane-context">Codex 上下文</button>
         </div>
         <section id="pane-record" class="detail-pane">
-          <h3>问题、观察与判断</h3><p id="detail-body" class="prose"></p>
+          <section id="journal-section" class="journal-section" aria-label="原话记录"></section>
+          <h3 class="detail-section">整理 <span class="muted small">（可随时改写）</span></h3><p id="detail-body" class="prose"></p>
           <p id="detail-time" class="muted small"></p>
           <section class="detail-section"><h3>从哪里来</h3><div id="source-list"></div></section>
           <section class="detail-section"><h3>已经走向哪里</h3><div id="target-list"></div></section>
-          <section class="detail-section"><h3>从这里继续</h3><p class="muted small">添加节点后，在画布里拖拽连线。</p>
+          <section class="detail-section"><h3>从这里继续</h3><p class="muted small">新节点会自动连到当前节点。</p>
             <div class="derive-actions">
               <button type="button" data-derive="idea">＋ 想法</button>
               <button type="button" data-derive="experiment">＋ 实验</button>

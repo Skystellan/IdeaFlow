@@ -12,6 +12,7 @@ import sys
 import uuid
 from pathlib import Path
 
+from . import journal
 from .store import Store, encode, now
 
 SKIP_DIRS = {".git", ".venv", "venv", "node_modules", "__pycache__", ".ssh", ".aws", ".codex", ".agents", ".idea-workbench", "runs", "models"}
@@ -107,7 +108,16 @@ def new_run(experiment_id, *, command=None, params=None, origin="managed"):
                 actual_params=None, metrics=None, snapshot=None, exit_code=None, error=None, origin=origin, pid=None)
 
 
-def prepare_run(store, experiment_id, command, includes, params):
+def run_entries(run, intent, expectation, author):
+    """Journal entries frozen when a run is requested, before any result can colour them."""
+    given = [(kind, text) for kind, text in (("intent", intent), ("expectation", expectation)) if text is not None]
+    if given and author not in journal.AUTHORS:
+        raise ValueError("Record who wrote --why/--expect with --by human or --by agent")
+    return [journal.build_entry(node_id=run["experiment_id"], kind=kind, author=author, text=text, run_id=run["id"])
+            | {"created_at": run["created_at"]} for kind, text in given]
+
+
+def prepare_run(store, experiment_id, command, includes, params, *, intent=None, expectation=None, author=None):
     if store.node(experiment_id)["kind"] != "experiment":
         raise ValueError("Choose an experiment node to run")
     if not isinstance(params, dict):
@@ -117,6 +127,7 @@ def prepare_run(store, experiment_id, command, includes, params):
         raise ValueError("Supply an executable and arguments after --")
     project = Path(store.state()["project"]["root"])
     run = new_run(experiment_id, command=command, params=params)
+    entries = run_entries(run, intent, expectation, author)
     directory = store.path / "runs" / run["id"]
     directory.mkdir(mode=0o700, parents=True)
     try:
@@ -146,7 +157,7 @@ def prepare_run(store, experiment_id, command, includes, params):
         run["execution_command"] = execution_command
         write_json(directory / "snapshot.json", run["snapshot"])
         write_json(directory / "requested-params.json", params)
-        store.add_run(run)
+        store.add_run(run, entries)
     except Exception:
         # Only discard this newly allocated, unregistered snapshot on preparation failure.
         shutil.rmtree(directory)
@@ -154,8 +165,8 @@ def prepare_run(store, experiment_id, command, includes, params):
     return run
 
 
-def start_run(store, experiment_id, command, includes, params, wait=False):
-    run = prepare_run(store, experiment_id, command, includes, params)
+def start_run(store, experiment_id, command, includes, params, wait=False, *, intent=None, expectation=None, author=None):
+    run = prepare_run(store, experiment_id, command, includes, params, intent=intent, expectation=expectation, author=author)
     directory = store.path / "runs" / run["id"]
     env = os.environ.copy()
     env["PYTHONPATH"] = str(Path(__file__).resolve().parent.parent)

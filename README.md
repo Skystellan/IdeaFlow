@@ -8,10 +8,13 @@ A local research canvas for turning ideas into experiments, evidence, and the ne
 
 ## What it does
 
+- **See each question as a thread.** The default thread map draws every research question as one horizontal line of experiment beads, with new questions forking off the result that prompted them. Lanes left by finished threads are reused, so the map grows with concurrent questions, not total history. The card flow graph is one click away.
+- **Keep the researcher's words, not a later summary.** An append-only journal, separate from editable titles and bodies, records why something was tried, what was expected, the first reaction to a result, and decisions on agent proposals, each labelled human or agent. Bead colours come only from recorded reactions.
+- **Decide what happens next.** A next-step panel lists agent proposals awaiting your decision, finished runs awaiting your reaction, recent surprises, and planned steps.
 - **Map research as a graph.** Separate canvases for independent topics; branching and merging within each canvas.
 - **Work directly on the canvas.** Create and connect nodes, pan and pinch to zoom, drag nodes or a selected group, and resize the detail panel. Thoughts and experiments use different shapes; small status lights keep the canvas readable.
 - **Keep evidence with each experiment.** Record declared and actual parameters, metrics, logs, source snapshots, Git metadata, and multiple runs per experiment. Compare runs and preserve edits as revisions.
-- **Work with Codex.** A bundled skill and JSON CLI let an agent read existing context, run experiments, and write findings and next steps into the same store as the app.
+- **Work with Codex.** A bundled skill and JSON CLI let an agent read existing context, run experiments with the researcher's verbatim reason (`run --why ... --by human`), propose next steps for approval (`propose`, `decide`), and record reactions (`react`) in the same store as the app.
 - **Own your data.** SQLite and experiment files stay in your project. No account, hosted database, or model API key is required by IdeaFlow itself.
 
 Early, single-user MVP. The UI is currently in Chinese. Browser mode and a macOS Electron app share the same Python backend. MCP, remote execution sync, and an autonomous research agent are not implemented yet; other agents can use the CLI, but dedicated integrations are not included.
@@ -80,6 +83,7 @@ python3 -m unittest discover -s tests -p 'test_idea_workbench*.py' -v
 node --check idea_workbench/static/app.js
 node tests/test_idea_workbench_layout.cjs
 node tests/test_idea_workbench_gestures.cjs
+node tests/test_idea_workbench_threads.cjs
 ```
 
 The repository contains the Python package, static canvas, Electron shell, agent skill, synthetic example, and focused regression tests. Issues and pull requests are welcome; include steps to reproduce with a synthetic graph rather than private research data.

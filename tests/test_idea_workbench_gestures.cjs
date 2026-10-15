@@ -20,7 +20,7 @@ const context = vm.createContext({
   positions: nodes, nodeButtons: buttons, manualPositions: new Map(), camera: { x: 10, y: 20, scale: .5 },
   selectedNodes: new Set(['a', 'b']), selectedEdges: new Set(['a-b', 'b-c']), selectedId: null,
   state: { nodes: [...nodes.keys()] }, gesture: null, edgeSaving: false, spacePressed: false,
-  edgePaths: [], connectionTarget: null,
+  edgePaths: [], connectionTarget: null, viewMode: 'flow',
   $: () => viewport,
   drawEdges() { redraws++; }, positionNodeActions() {}, applyCamera() {}, renderGraph() {},
   cancelConnection() {}, closeDetails() {},

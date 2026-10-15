@@ -56,6 +56,19 @@ python3 -m idea_workbench --store runs/idea-workbench-demo serve
 
 滚轮 / 触控板双指滑动平移，捏合缩放，`Shift`＋滚轮横向平移。可拖动空白平移、拖动节点调整位置。底部“适应画布”显示当前画布全部节点；“更多”中提供重新排布、查找节点、比较运行和导出。键盘可用 `+` / `-` 缩放、`0` 适应画布、方向键平移；聚焦节点后 `Alt`＋方向键移动节点，配合 `Shift` 增大步长。视图保存在当前浏览器、当前地址下，换浏览器或端口不会同步布局。重新排布只恢复当前画布的自动位置，不修改研究记录。
 
+## 线程图、下一步与原话记录
+
+打开项目默认是**线程图**：每个研究问题是一条横线，实验和想法是线上的圆点，从具体发现分出的新问题另起一条线。同一问题内继续尝试向右生长，不会把画布往下拉长；结束或暂停的线程空出的行会被后来的问题复用，所以高度取决于同时推进的问题数，而不是问题总数。横向位置表示依赖顺序上的第几步，不是日历时间。圆点只按已经记录的反应着色：绿色符合预期、橙色菱形与预期不符、黄圈结果混合、灰色未记录反应；虚线圈是 Agent 的提议，等你决定。没有记录反应的历史实验保持灰色，不会根据标题猜测。底部可切换回原来的**流向图**，在那里拖动卡片和手动连线。
+
+左侧**下一步**面板列出等你处理的事：Agent 提出的待决定实验、跑完等你回应的结果、正在运行的任务、最近与预期不符的结果和计划中的下一步，跨画布汇总。点击一项会定位节点，并把光标放到对应的输入框。
+
+节点详情顶部是**原话记录**。它与节点标题、正文分开保存，只能追加，不能修改或删除（数据库触发器也会拒绝改写），删除节点后仍会保留。每条记录标明是研究者的原话还是 Agent 写的，以及记录时间；通过命令行由 Agent 转录的研究者原话会标为“经 Agent 转录”，结果出来后才补写的“为什么 / 预期”会标为“结果出来后补写”。它只保存事后无法补回的内容：为什么做、当时的预期、看到结果的第一反应，以及对提议的决定。参数、代码和指标仍由运行记录保存，标题和正文仍可随时整理。
+
+- **待你决定**：写一句为什么（必填，会按原话保存并锁定）和可选的预期，再批准或暂不做。批准后节点变为进行中；暂不做会保留为“考虑过但没做”。
+- **结果回来了**：在“符合预期 / 与预期不符 / 混合或说不清”中选一个，可附一句话。选“与预期不符”后，可以直接从这条记录分出新问题，新问题会自动连到这个实验。
+- **随手记一句**：任何时候都可以给节点追加随记、为什么或预期。
+- 从详情页“从这里继续”创建的节点会自动连到当前节点。
+
 ## 建立自己的研究
 
 ```sh
@@ -101,6 +114,22 @@ python3 -m idea_workbench unlink --source SOURCE_ID --target TARGET_ID
 
 未指定画布时，有来源的新节点继承来源画布，无来源节点进入主画布。`--source` 仍可用于一次创建并连接；普通画布操作默认先创建再连接。研究支线不等于新画布，相关分叉默认留在原画布，只有需要独立画布时才使用 `canvas` 命令。
 
+记录原话与提议（文字都要用 `--by human` 或 `--by agent` 标明作者；`human` 只用于逐字引用研究者的话）：
+
+```sh
+python3 -m idea_workbench run --experiment EXPERIMENT_ID --include train.py \
+  --why "研究者的原话：先试一下 A，看看会不会好一些" --expect "研究者说的预期" --by human -- python3 train.py
+python3 -m idea_workbench react RUN_ID --outcome surprised --text "研究者看到结果后的第一反应"
+python3 -m idea_workbench propose --title "下一项最小验证" --source FINDING_ID --why "Agent 提出它的理由"
+python3 -m idea_workbench decide EXPERIMENT_ID --approve --text "研究者批准时说的理由" --expect "研究者的预期"
+python3 -m idea_workbench decide EXPERIMENT_ID --decline
+python3 -m idea_workbench note NODE_ID --by agent --text "Agent 的解释草稿"
+python3 -m idea_workbench journal NODE_ID
+python3 -m idea_workbench frontier --canvas CANVAS_ID
+```
+
+`propose` 创建待验证实验，并把理由记为 Agent 所写；研究者在 App 或对话中决定前，它会一直留在“下一步”里，直接改状态不能代替决定。`react` 和 `decide` 只记录研究者本人的反应与决定，Agent 的解释用 `note --by agent`。与某次运行绑定的“为什么 / 预期”只能在运行结束前写入，结果出来后的想法记为随记。`context` 输出会附上相关节点的原话记录，并标明作者。
+
 从一个发现派生新问题：`node --kind idea --source FINDING_ID --reason "分叉理由" --title "新问题"`。综合同一画布内的多个来源时重复 `--source`，必要时用 `--idea IDEA_ID` 指定原有归属主线；`--idea` 不指定画布。编辑文本或暂停不会删除历史：`edit NODE_ID --status paused --body-file pause-note.txt`；恢复使用 `--status active`。
 
 ```sh
@@ -139,7 +168,7 @@ Path(os.environ["IDEA_METRICS_PATH"]).write_text(json.dumps({"loss": measured_lo
 
 ## 数据与访问边界
 
-- 数据库：`research.sqlite3`，记录节点、关系、修订与运行元数据。
+- 数据库：`research.sqlite3`，记录节点、关系、修订、运行元数据，以及只追加的原话记录（`entries` 表）。打开旧项目时自动补建该表，不修改已有记录。
 - 运行目录：`runs/RUN_ID/`，保存快照、日志、配置、指标。
 - JSON 导出包含记录和修订，不包含源码/大产物；完整备份请在运行结束并关闭写入进程后复制整个存储目录。
 - 服务仅绑定 `127.0.0.1`，校验 Host/Origin，写操作使用同源请求令牌。HTTP 接口只修改研究记录，执行任意实验仍通过本机 CLI/Codex。
@@ -153,6 +182,8 @@ python3 -m unittest discover -s tests -p test_idea_workbench.py -v
 node --check idea_workbench/static/app.js
 node tests/test_idea_workbench_layout.cjs
 node tests/test_idea_workbench_gestures.cjs
+node tests/test_idea_workbench_threads.cjs
+python3 -m unittest discover -s tests -p 'test_idea_workbench_journal.py' -v
 python3 -m unittest discover -s tests -p test_idea_workbench_desktop.py -v
 # 打包后：验证包内链接、独立运行环境、静态页面、保存记录和退出清理。
 python3 idea_workbench/desktop/smoke.py "/path/to/IdeaFlow.app"

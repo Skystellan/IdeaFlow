@@ -5,25 +5,14 @@ import json
 import sqlite3
 import uuid
 from contextlib import closing, contextmanager
-from datetime import datetime, timezone
 from pathlib import Path
+
+from . import journal
+from .fields import encode, now, text_field
 
 KINDS = {"idea", "experiment", "insight", "next"}
 STATUSES = {"active", "paused", "done", "proposed"}
-
-
-def now():
-    return datetime.now(timezone.utc).isoformat(timespec="microseconds")
-
-
-def encode(value):
-    return json.dumps(value, ensure_ascii=False, allow_nan=False)
-
-
-def text_field(value, label, limit, required=False):
-    if not isinstance(value, str) or len(value) > limit or (required and not value.strip()):
-        raise ValueError(f"{label} must be {'non-empty ' if required else ''}text, at most {limit} characters")
-    return value.strip()
+__all__ = ["KINDS", "STATUSES", "Store", "encode", "now", "text_field"]
 
 
 class Store:
@@ -42,6 +31,8 @@ class Store:
             if "canvas_id" not in {r["name"] for r in db.execute("PRAGMA table_info(nodes)")}:
                 db.execute("ALTER TABLE nodes ADD COLUMN canvas_id TEXT REFERENCES canvases(id)")
             db.execute("UPDATE nodes SET canvas_id='canvas-main' WHERE canvas_id IS NULL")
+            for statement in journal.SCHEMA:
+                db.execute(statement)
 
     @classmethod
     def initialize(cls, path, name, project_root):
@@ -111,6 +102,12 @@ class Store:
         return canvas
 
     def add_node(self, *, kind, title, body="", status=None, source_ids=None, reason="", idea_id=None, canvas_id=None):
+        return self._add_node(kind=kind, title=title, body=body, status=status, source_ids=source_ids,
+                              reason=reason, idea_id=idea_id, canvas_id=canvas_id)
+
+    def _add_node(self, *, kind, title, body="", status=None, source_ids=None, reason="", idea_id=None, canvas_id=None,
+                  then=None):
+        """Create a node; `then(db, node)` runs in the same transaction for records that must not be partial."""
         if kind not in KINDS:
             raise ValueError("kind must be idea, experiment, insight or next")
         title = text_field(title, "title", 200, True)
@@ -156,6 +153,8 @@ class Store:
             relation = "fork" if kind == "idea" else "synthesis" if len(sources) > 1 else "continues"
             # A newly created target has no outgoing edges, so these additions cannot form a cycle.
             db.executemany("INSERT INTO edges VALUES(?,?,?,?)", [(s, node_id, relation, reason) for s in source_ids])
+            if then is not None:
+                then(db, node)
         return node
 
     def add_edge(self, source, target, reason=""):
@@ -252,10 +251,95 @@ class Store:
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             old = self._node(db, node_id)
-            node = old | changes | {"updated_at": now()}
-            db.execute("INSERT INTO revisions(node_id,previous,changed_at) VALUES(?,?,?)", (node_id, encode(old), node["updated_at"]))
-            db.execute("UPDATE nodes SET title=:title,body=:body,status=:status,updated_at=:updated_at WHERE id=:id", node)
+            if old["status"] == "proposed" and changes.get("status", "proposed") != "proposed" and self._undecided(db, node_id):
+                raise ValueError("This proposal awaits the researcher's decision; record it with decide instead of a status edit")
+            return self._revise(db, old, changes)
+
+    @staticmethod
+    def _undecided(db, node_id):
+        kinds = {r[0] for r in db.execute("SELECT kind FROM entries WHERE node_id=? AND kind IN ('proposal','decision')", (node_id,))}
+        return kinds == {"proposal"}
+
+    @staticmethod
+    def _revise(db, old, changes):
+        node = old | changes | {"updated_at": now()}
+        db.execute("INSERT INTO revisions(node_id,previous,changed_at) VALUES(?,?,?)", (old["id"], encode(old), node["updated_at"]))
+        db.execute("UPDATE nodes SET title=:title,body=:body,status=:status,updated_at=:updated_at WHERE id=:id", node)
         return node
+
+    # Journal: append-only words. Graph edits never touch these rows.
+
+    def add_entry(self, *, node_id, kind, text, author, via="cli", run_id=None):
+        """Append a note, intent or expectation. Reactions, decisions and proposals have their own methods."""
+        journal.choice(kind, journal.WRITABLE_KINDS, "kind")
+        entry = journal.build_entry(node_id=node_id, kind=kind, author=author, text=text, run_id=run_id, via=via)
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            self._node(db, entry["node_id"])
+            if entry["run_id"] is not None:
+                run = self._run(db, entry["run_id"])
+                if run["experiment_id"] != entry["node_id"]:
+                    raise ValueError("The run belongs to a different experiment")
+                # A reason or expectation tied to a run is only meaningful before its result exists.
+                if entry["kind"] in {"intent", "expectation"} and run["status"] not in journal.UNFINISHED_RUNS:
+                    raise ValueError("This run has finished; add later thoughts as a note instead of an intent or expectation")
+            return journal.insert_entry(db, entry)
+
+    def entries(self, node_id=None):
+        with self.connect() as db:
+            if node_id is None:
+                rows = db.execute("SELECT * FROM entries ORDER BY created_at,rowid")
+            else:
+                rows = db.execute("SELECT * FROM entries WHERE node_id=? ORDER BY created_at,rowid", (node_id,))
+            return [dict(r) for r in rows]
+
+    def propose(self, *, title, rationale, body="", source_ids=None, reason="", canvas_id=None, via="cli"):
+        """An agent's proposed experiment. It waits in the frontier until the researcher decides."""
+        created = {}
+
+        def record(db, node):
+            created["entry"] = journal.insert_entry(db, journal.build_entry(
+                node_id=node["id"], kind="proposal", author="agent", text=rationale, via=via))
+
+        # `record` runs inside the node's transaction, so an invalid rationale leaves no node behind.
+        node = self._add_node(kind="experiment", title=title, body=body, status="proposed", source_ids=source_ids,
+                              reason=reason, canvas_id=canvas_id, then=record)
+        return {"node": node, "entry": created["entry"]}
+
+    def decide(self, node_id, *, decision, text="", expectation="", via="cli"):
+        """Record the researcher's own reason for approving or declining a proposed experiment."""
+        made = journal.build_entry(node_id=node_id, kind="decision", author="human", text=text, decision=decision, via=via)
+        expected = None
+        if text_field(expectation, "expectation", journal.TEXT_LIMIT):
+            if decision != "approved":
+                raise ValueError("Only an approved experiment records an expectation")
+            expected = journal.build_entry(node_id=node_id, kind="expectation", author="human", text=expectation, via=via)
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            node = self._node(db, made["node_id"])
+            if node["kind"] != "experiment" or node["status"] != "proposed":
+                raise ValueError("Only a proposed experiment awaits a decision")
+            entries = [journal.insert_entry(db, e) for e in (made, expected) if e is not None]
+            updated = self._revise(db, node, {"status": "active" if decision == "approved" else "paused"})
+        return {"node": updated, "entries": entries}
+
+    def react(self, run_id, *, outcome, text="", via="cli"):
+        """The researcher's first reaction to a finished run. Agent interpretations are notes."""
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            run = self._run(db, text_field(run_id, "run_id", 200, True))
+            if run["status"] in journal.UNFINISHED_RUNS:
+                raise ValueError("Record a reaction after the run finishes")
+            entry = journal.build_entry(node_id=run["experiment_id"], kind="reaction", author="human", text=text,
+                                        run_id=run["id"], outcome=outcome, via=via)
+            return journal.insert_entry(db, entry)
+
+    @staticmethod
+    def _run(db, run_id):
+        row = db.execute("SELECT data FROM runs WHERE id=?", (run_id,)).fetchone()
+        if row is None:
+            raise ValueError(f"Unknown run: {run_id}")
+        return json.loads(row[0])
 
     def state(self):
         with self.connect() as db:
@@ -266,6 +350,7 @@ class Store:
                 "nodes": [dict(r) for r in db.execute("SELECT * FROM nodes ORDER BY created_at,id")],
                 "edges": [dict(r) for r in db.execute("SELECT * FROM edges ORDER BY rowid")],
                 "runs": [json.loads(r[0]) for r in db.execute("SELECT data FROM runs ORDER BY rowid")],
+                "entries": [dict(r) for r in db.execute("SELECT * FROM entries ORDER BY created_at,rowid")],
             }
 
     def export(self):
@@ -274,11 +359,17 @@ class Store:
             data["revisions"] = [dict(r) | {"previous": json.loads(r["previous"])} for r in db.execute("SELECT * FROM revisions ORDER BY id")]
         return {"schema_version": 1, "exported_at": now(), **data}
 
-    def add_run(self, run):
+    def add_run(self, run, entries=()):
+        """Register a run together with the intent and expectation recorded before it executes."""
         with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
             if self._node(db, run["experiment_id"])["kind"] != "experiment":
                 raise ValueError("Runs must belong to an experiment")
             db.execute("INSERT INTO runs VALUES(?,?,?)", (run["id"], run["experiment_id"], encode(run)))
+            for entry in entries:
+                if (entry["node_id"], entry["run_id"]) != (run["experiment_id"], run["id"]):
+                    raise ValueError("Run entries must belong to the new run")
+                journal.insert_entry(db, entry)
         return run
 
     def run(self, run_id):
@@ -325,8 +416,12 @@ class Store:
         lines.append("\n实际运行：")
         for r in runs:
             lines.append(f"{r['id']} / {r['experiment_id']} / {r['status']} / 指标={encode(r['metrics'])}")
+        entries = [e for e in data["entries"] if e["node_id"] in history_ids]
+        lines.append("\n原话记录（只追加，当时写下；引用时不要改写，也不要把 Agent 的话当成研究者的意图）：")
+        lines.extend(journal.journal_lines(entries) or ["（尚无当时记录的原话）"])
         lines.extend(["", "继续研究时保留来源节点；结果、解释与候选下一步分别记录。未知的历史参数或代码状态不要补造。"])
-        return {"node": selected, "history": history, "runs": runs, "next_steps": next_steps, "text": "\n".join(lines)}
+        return {"node": selected, "history": history, "runs": runs, "next_steps": next_steps, "entries": entries,
+                "text": "\n".join(lines)}
 
     def compare(self, left_id, right_id):
         left, right = self.run(left_id), self.run(right_id)

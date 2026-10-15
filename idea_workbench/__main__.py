@@ -7,6 +7,7 @@ import shutil
 import sys
 from pathlib import Path
 
+from .journal import AUTHORS, OUTCOMES, WRITABLE_KINDS, frontier
 from .runner import execute_run, import_run, read_object, start_run
 from .store import KINDS, STATUSES, Store, encode
 
@@ -54,7 +55,39 @@ def parser():
     run.add_argument("--params", default="{}", help="Declared parameters, JSON object; not inferred actual configuration")
     run.add_argument("--params-file", type=Path)
     run.add_argument("--wait", action="store_true")
+    run.add_argument("--why", help="Why this run, in the words actually said; frozen before the result exists")
+    run.add_argument("--expect", help="What the researcher expects, verbatim; leave out if nobody said")
+    run.add_argument("--by", choices=sorted(AUTHORS), help="Whose words --why/--expect are (required with them)")
     run.add_argument("command", nargs=argparse.REMAINDER)
+    propose = sub.add_parser("propose", help="Agent proposes an experiment; it waits for the researcher's decision")
+    propose.add_argument("--title", required=True)
+    propose.add_argument("--why", required=True, help="The agent's rationale, recorded as agent-authored")
+    propose.add_argument("--body", default="")
+    propose.add_argument("--body-file", type=Path)
+    propose.add_argument("--source", action="append", default=[])
+    propose.add_argument("--reason", default="")
+    propose.add_argument("--canvas")
+    decide = sub.add_parser("decide", help="Record the researcher's decision on a proposed experiment")
+    decide.add_argument("id")
+    verdict = decide.add_mutually_exclusive_group(required=True)
+    verdict.add_argument("--approve", action="store_true")
+    verdict.add_argument("--decline", action="store_true")
+    decide.add_argument("--text", default="", help="The researcher's own reason, verbatim (required to approve)")
+    decide.add_argument("--expect", default="", help="The researcher's expectation, verbatim")
+    note = sub.add_parser("note", help="Append words to a node's journal; entries can never be edited")
+    note.add_argument("id")
+    note.add_argument("--text", required=True)
+    note.add_argument("--by", required=True, choices=sorted(AUTHORS))
+    note.add_argument("--kind", default="note", choices=sorted(WRITABLE_KINDS))
+    note.add_argument("--run", help="Run this note is about (must belong to the node)")
+    react = sub.add_parser("react", help="Record the researcher's first reaction to a finished run")
+    react.add_argument("id")
+    react.add_argument("--outcome", required=True, choices=sorted(OUTCOMES))
+    react.add_argument("--text", default="", help="The researcher's words, verbatim; agent interpretations go in note")
+    entries = sub.add_parser("journal", help="Read journal entries, optionally for one node")
+    entries.add_argument("id", nargs="?")
+    pending = sub.add_parser("frontier", help="What waits on the researcher: decisions, reactions, surprises, plans")
+    pending.add_argument("--canvas")
     imported = sub.add_parser("import-run", help="Import existing JSON metrics with explicit unknown provenance")
     imported.add_argument("--experiment", required=True)
     imported.add_argument("--metrics", type=Path, required=True)
@@ -167,7 +200,22 @@ def main():
             elif args.action == "run":
                 command = args.command[1:] if args.command[:1] == ["--"] else args.command
                 params = read_object(args.params_file) if args.params_file else json.loads(args.params)
-                result = start_run(store, args.experiment, command, args.include, params, args.wait)
+                result = start_run(store, args.experiment, command, args.include, params, args.wait,
+                                   intent=args.why, expectation=args.expect, author=args.by)
+            elif args.action == "propose":
+                result = store.propose(title=args.title, rationale=args.why, source_ids=args.source, reason=args.reason,
+                                       body=args.body_file.read_text() if args.body_file else args.body, canvas_id=args.canvas)
+            elif args.action == "decide":
+                result = store.decide(args.id, decision="approved" if args.approve else "declined",
+                                      text=args.text, expectation=args.expect)
+            elif args.action == "note":
+                result = store.add_entry(node_id=args.id, kind=args.kind, text=args.text, author=args.by, run_id=args.run)
+            elif args.action == "react":
+                result = store.react(args.id, outcome=args.outcome, text=args.text)
+            elif args.action == "journal":
+                result = store.entries(args.id)
+            elif args.action == "frontier":
+                result = frontier(store.state(), canvas_id=args.canvas)
             elif args.action == "_worker":
                 result = execute_run(store, args.id)
             elif args.action == "import-run":
