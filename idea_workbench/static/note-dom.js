@@ -89,6 +89,24 @@
     return list;
   }
 
+  function tableCell(tag, spans, align) {
+    const cell = filled(el(tag), spans);
+    if (align) { cell.dataset.align = align; cell.style.textAlign = align; }
+    return cell;
+  }
+
+  function tableNode(block) {
+    const columns = Math.max(1, ...block.rows.map(row => row.length));
+    const table = el('table', 'note-table'), head = el('thead'), body = el('tbody');
+    block.rows.forEach((row, index) => {
+      const line = el('tr');
+      for (let column = 0; column < columns; column++) line.append(tableCell(index ? 'td' : 'th', row[column] || [], block.align?.[column]));
+      (index ? body : head).append(line);
+    });
+    table.append(head, body);
+    return table;
+  }
+
   function blockNode(block) {
     switch (block.type) {
       case 'heading': return filled(el(`h${Math.min(6, Math.max(1, block.level))}`), block.inline);
@@ -106,6 +124,7 @@
         return pre;
       }
       case 'divider': return el('hr');
+      case 'table': return tableNode(block);
       case 'image': return figure(block.src, block.alt);
       default: return filled(el('p'), block.inline);
     }
@@ -139,6 +158,7 @@
     if (tag === 'BR') { spans.push({ text: '\n' }); return; }
     if (tag === 'FIGURE') { hoisted.push(...readBlock(node, [])); return; }
     if (tag === 'UL' || tag === 'OL') { hoisted.push(readList(node, hoisted)); return; }
+    if (tag === 'TABLE') { hoisted.push(readTable(node, hoisted)); return; }
     if (tag === 'IMG' || tag === 'BUTTON' || tag === 'STYLE' || tag === 'SCRIPT') return;
     let next = styleMarks(node, marks);
     if (tag === 'B' || tag === 'STRONG') next.bold = true;
@@ -199,6 +219,15 @@
     return text.replace(/\n$/, '');
   }
 
+  // The first row is the header, whether or not the browser put it in <thead> (pasted tables often don't).
+  function readTable(table, hoisted) {
+    const rows = [...table.querySelectorAll('tr')].filter(row => row.closest('table') === table);
+    const cells = rows.map(row => [...row.children].filter(cell => cell.tagName === 'TD' || cell.tagName === 'TH')
+      .map(cell => inlineOf(cell, hoisted).map(span => ({ ...span, text: span.text.replace(/\n/g, ' ') }))));
+    const header = rows[0] ? [...rows[0].children] : [];
+    return { type: 'table', align: header.map(cell => cell.dataset?.align || ''), rows: cells.length ? cells : [[[]]] };
+  }
+
   function readBlock(node, hoisted) {
     const tag = node.tagName;
     if (/^H[1-6]$/.test(tag)) return [{ type: 'heading', level: Number(tag[1]), inline: inlineOf(node, hoisted) }];
@@ -208,6 +237,7 @@
       return [node.dataset.raw ? { type: 'raw', text: preText(node) } : { type: 'code', lang: node.dataset.lang || '', text: preText(node) }];
     }
     if (tag === 'HR') return [{ type: 'divider' }];
+    if (tag === 'TABLE') return [readTable(node, hoisted)];
     if (tag === 'FIGURE') return node.dataset.src ? [{ type: 'image', alt: node.dataset.alt || '', src: node.dataset.src }] : [];
     if ((tag === 'DIV' || tag === 'SECTION' || tag === 'ARTICLE') && [...node.children].some(child => BLOCK_TAGS.has(child.tagName))) {
       return read(node);

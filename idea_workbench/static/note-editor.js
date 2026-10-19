@@ -7,7 +7,7 @@
   const { parse, serialize } = window.NoteMarkdown;
   const Dom = window.NoteDom;
   const IMAGE_TYPES = /^image\/(?:png|jpeg|gif|webp)$/;
-  const TEXT_BLOCK = 'li, p, h1, h2, h3, h4, h5, h6, blockquote, pre, div';
+  const TEXT_BLOCK = 'td, th, li, p, h1, h2, h3, h4, h5, h6, blockquote, pre, div';
   const HINT = '输入 / 插入标题、列表、图片…';
   // Typed at the start of a paragraph, these turn it into another block (full-width forms for Chinese input).
   const SHORTCUTS = [
@@ -34,7 +34,7 @@
     root.setAttribute('aria-multiline', 'true');
     root.dataset.placeholder = '写点什么……输入 / 插入标题、列表、图片；也可以直接粘贴或拖入图片。';
     // Bumped whenever another note loads, so a slow upload never lands in the wrong note.
-    let composing = false, menus = null, generation = 0;
+    let composing = false, menus = null, tables = null, generation = 0;
     const picker = Object.assign(document.createElement('input'), { type: 'file', accept: 'image/png,image/jpeg,image/gif,image/webp', multiple: true, hidden: true });
     root.after(picker);
     let pickAnchor = null;
@@ -126,7 +126,7 @@
       const last = root.lastElementChild;
       if (!last) root.replaceChildren(paragraph());
       // Something to click into after an image, divider or code block at the end.
-      else if (['FIGURE', 'HR', 'PRE'].includes(last.tagName)) root.append(paragraph());
+      else if (['FIGURE', 'HR', 'PRE', 'TABLE'].includes(last.tagName)) root.append(paragraph());
     }
 
     function updateHints() {
@@ -164,6 +164,7 @@
       const range = caret();
       const block = range && textBlock(range.startContainer);
       if (kind === 'image') { pickImages(topBlock(range?.startContainer)); return; }
+      if (kind === 'table') { tables.insert(topBlock(range?.startContainer)); return; }
       if (kind === 'divider') insertDivider(topBlock(range?.startContainer));
       else if (kind === 'p' && block?.tagName === 'LI') exec('outdent');
       else if (/^h[1-3]$/.test(kind) || kind === 'p') exec('formatBlock', kind);
@@ -353,6 +354,7 @@
         if (li?.dataset.checked !== undefined) { event.preventDefault(); toggleTask(li); }
         return;
       }
+      if ((event.key === 'Tab' || event.key === 'Enter') && tables.handleKey(event, range)) return;
       if (event.key === 'Enter') onEnter(event, range);
       else if (event.key === 'Backspace') onBackspace(event, range);
       else if (event.key === 'Delete') {
@@ -491,6 +493,7 @@
       if (!root.isConnected) return;
       updateHints();
       menus?.onSelectionChange();
+      tables?.onSelectionChange();
     });
     root.addEventListener('focus', () => {
       exec('defaultParagraphSeparator', 'p');
@@ -498,10 +501,11 @@
     });
 
     const editor = {
-      root, caret, textBlock, topBlock, around, apply, exec, changed, removeBefore,
+      root, caret, textBlock, topBlock, around, apply, exec, changed, removeBefore, placeCaret,
       setMarkdown(markdown) {
         generation++;
         menus?.close();
+        tables?.hide();
         root.replaceChildren(Dom.render(parse(markdown)));
         ensureContent();
         updateHints();
@@ -516,6 +520,7 @@
       },
     };
     menus = window.NoteMenus.create(editor);
+    tables = window.NoteTable.create(editor);
     return editor;
   }
 

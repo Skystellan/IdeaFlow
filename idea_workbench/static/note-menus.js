@@ -14,6 +14,7 @@
     ['quote', '引用', '> 开头', 'quote yy yinyong 引用'],
     ['code', '代码块', '``` 开头', 'code dm daima 代码'],
     ['divider', '分割线', '--- 开头', 'hr divider line fgx fengexian 分割线 分隔'],
+    ['table', '表格', 'Tab / 回车在格子间移动', 'table grid bg biaoge 表格'],
     ['image', '图片', '也可以直接粘贴或拖入', 'image img picture photo screenshot tp tupian jietu 图片 照片 截图'],
   ];
   const FORMATS = [
@@ -100,7 +101,7 @@
       const range = editor.caret();
       if (!range?.collapsed || range.startContainer.nodeType !== Node.TEXT_NODE) return;
       const block = editor.textBlock(range.startContainer);
-      if (!block || block.tagName === 'PRE') return;
+      if (!block || ['PRE', 'TD', 'TH'].includes(block.tagName)) return;
       const head = editor.around(block, range).before.slice(0, -1);
       if (data === '/' ? !(head === '' || /\s$/.test(head)) : head !== '') return;
       slash = { node: range.startContainer, offset: range.startOffset - 1 };

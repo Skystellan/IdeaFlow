@@ -6,6 +6,7 @@
   // Single newlines inside a paragraph are line breaks, which keeps older plain-text bodies intact.
   //
   // Blocks: paragraph/heading/quote { inline }, list { ordered, start?, items: [{ inline, checked, children }] },
+  // table { align: ['' | 'left' | 'center' | 'right'], rows: [header, ...body] of cells, each an inline array },
   // code { lang, text }, divider, image { alt, src }, raw { text } for tables and math kept verbatim.
   // Inline: [{ text, bold?, italic?, strike?, code?, href? }].
 
@@ -153,6 +154,49 @@
     return `${indent}\\${line.slice(indent.length)}`;
   }
 
+  // ---- Tables (GitHub style: header row, delimiter row, body rows) ----
+
+  const DELIMITER_ROW = /^\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?\s*$/;
+
+  // Split on unescaped pipes. "\|" becomes a literal pipe; other escapes stay for the inline parser.
+  function splitRow(line) {
+    const text = line.trim(), cells = [];
+    let cell = '', closed = false;
+    for (let i = 0; i < text.length; i++) {
+      const char = text[i];
+      closed = false;
+      if (char === '\\' && i + 1 < text.length) { cell += text[i + 1] === '|' ? '|' : char + text[i + 1]; i++; continue; }
+      if (char === '|') { cells.push(cell); cell = ''; closed = true; continue; }
+      cell += char;
+    }
+    if (!closed) cells.push(cell);
+    if (text.startsWith('|')) cells.shift();
+    return cells.map(value => value.trim());
+  }
+
+  const alignment = cell => cell.startsWith(':') && cell.endsWith(':') ? 'center' : cell.endsWith(':') ? 'right' : cell.startsWith(':') ? 'left' : '';
+
+  // A table whose rows have more cells than its header cannot be modelled; it stays verbatim.
+  function parseTable(lines) {
+    if (lines.length < 2 || !DELIMITER_ROW.test(lines[1])) return null;
+    const header = splitRow(lines[0]), align = splitRow(lines[1]).map(alignment);
+    const body = lines.slice(2).map(splitRow);
+    if (align.length !== header.length || body.some(row => row.length > header.length)) return null;
+    const rows = [header, ...body].map(row => header.map((_, index) => parseInline(row[index] || '')));
+    return { type: 'table', align, rows };
+  }
+
+  function serializeTable(block) {
+    const columns = Math.max(1, ...block.rows.map(row => row.length));
+    const cell = spans => serializeInline((spans || []).map(span => ({ ...span, text: span.text.replace(/\n/g, ' ') })))
+      .replace(/\|/g, '\\|');
+    const line = row => `| ${Array.from({ length: columns }, (_, index) => cell(row[index])).join(' | ')} |`.replace(/ {2}\|/g, ' |');
+    const rule = Array.from({ length: columns }, (_, index) => ({ left: ':---', right: '---:', center: ':---:' }[block.align?.[index]] || '---'));
+    // Empty body rows (added and never filled) are not saved.
+    const body = block.rows.slice(1).filter(row => row.some(spans => spans?.some(span => span.text.trim())));
+    return [line(block.rows[0] || []), `| ${rule.join(' | ')} |`, ...body.map(line)].join('\n');
+  }
+
   // A list item here holds text and nested lists only. A list containing anything else
   // (fenced code, tables, math, quotes, headings, images) is kept verbatim as a raw block.
   const NESTED_BLOCK = line => FENCE.test(line) || TABLE.test(line) || MATH.test(line) || QUOTE.test(line)
@@ -255,7 +299,7 @@
       if (TABLE.test(line)) {
         const body = [];
         for (; i < lines.length && TABLE.test(lines[i]); i++) body.push(lines[i]);
-        blocks.push({ type: 'raw', text: body.join('\n') });
+        blocks.push(parseTable(body) || { type: 'raw', text: body.join('\n') });
         continue;
       }
       const heading = HEADING.exec(line);
@@ -323,6 +367,7 @@
       case 'divider': return '---';
       case 'image': return `![${String(block.alt || '').replace(/[\\\]]/g, '\\$&')}](${encodeUrl(block.src)})`;
       case 'raw': return block.text;
+      case 'table': return serializeTable(block);
       default: return serializeInline(block.inline, out => out.split('\n').map(escapeLine).join('\n'));
     }
   }
@@ -331,6 +376,7 @@
     if (block.type === 'paragraph') return !block.inline.some(span => span.text.trim());
     if (block.type === 'list') return !block.items.length;
     if (block.type === 'raw' || block.type === 'code') return !block.text.trim();
+    if (block.type === 'table') return !block.rows?.length;
     return false;
   }
 

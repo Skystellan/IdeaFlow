@@ -21,7 +21,7 @@ STATIC_FILES = {
     **{f"/static/{name}": (name, "text/javascript") for name in (
         "app.js", "graph-layout.js", "thread-layout.js", "journal-model.js",
         "threads-view.js", "journal-view.js", "frontier-view.js",
-        "note-markdown.js", "note-dom.js", "note-editor.js", "note-menus.js", "note-outbox.js", "node-state.js", "node-page.js")},
+        "note-markdown.js", "note-dom.js", "note-editor.js", "note-menus.js", "note-table.js", "note-outbox.js", "node-state.js", "node-page.js")},
 }
 
 

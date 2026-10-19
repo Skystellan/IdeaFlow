@@ -24,12 +24,12 @@ const note = [
   '- 一\n  - 一点一\n- 二', '1. 第一\n2. 第二\n   1. 嵌套',
   '- [ ] 待办\n- [x] 完成', '> 引用第一行\n> 第二行',
   '```python\nprint("hi")\n\n# comment\n```', '---', '![loss](assets/0123456789abcdef01234567.png)',
-  '| a | b |\n|---|---|\n| 1 | 2 |', '$$\n\\frac{a}{b}\n$$',
+  '| a | b |\n| --- | ---: |\n| 1 | **2** |', '$$\n\\frac{a}{b}\n$$',
 ].join('\n\n');
 roundtrip(note, 'All supported blocks round-trip');
 const blocks = parse(note);
 assert.deepEqual(blocks.map(block => block.type), ['heading', 'heading', 'heading', 'paragraph', 'list', 'list', 'list',
-  'quote', 'code', 'divider', 'image', 'raw', 'raw']);
+  'quote', 'code', 'divider', 'image', 'table', 'raw']);
 assert.deepEqual(blocks[3].inline, [text('正文有 '), { text: '加粗', bold: true }, text('、'), { text: '斜体', italic: true },
   text('、'), { text: '删除', strike: true }, text('、'), { text: 'code', code: true }, text(' 和 '),
   { text: '链接', href: 'https://example.com/a_b' }, text('。')]);
@@ -51,6 +51,26 @@ for (const nested of [
 ]) roundtrip(nested, `Nested content survives a save: ${JSON.stringify(nested)}`);
 assert.equal(parse('1. Run:\n   ```py\n   - not an item\n\n   x\n   ```\n2. Next')[0].type, 'raw',
   'A fence inside an item swallows lines that look like items or blank lines');
+
+// Tables render as tables: cells hold inline Markdown, alignment is kept, pipes in text are escaped.
+{
+  const [table] = parse('| 小经验 | 英文 Δ |\n|---|---:|\n| ⑤ 相似对象 | **+8.33** |\n| 完整 E_v4 | +5.56 |');
+  assert.deepEqual(table, { type: 'table', align: ['', 'right'], rows: [
+    [[text('小经验')], [text('英文 Δ')]],
+    [[text('⑤ 相似对象')], [{ text: '+8.33', bold: true }]],
+    [[text('完整 E_v4')], [text('+5.56')]],
+  ] });
+  assert.equal(serialize([table]), '| 小经验 | 英文 Δ |\n| --- | ---: |\n| ⑤ 相似对象 | **+8.33** |\n| 完整 E_v4 | +5.56 |',
+    'Compact tables are saved in a normalized but equivalent form');
+  const piped = { type: 'table', align: ['center', 'left'], rows: [[[text('a|b')], [{ text: 'x|y', code: true }]], [[], [text('c\\|d')]]] };
+  assert.deepEqual(parse(serialize([piped])), [piped], 'Pipes in text and code, and empty cells, read back unchanged');
+  assert.deepEqual(parse('| a |\n|---|\n| 1 |\n\nafter').map(block => block.type), ['table', 'paragraph']);
+  assert.deepEqual(parse('| a | b |\n|---|---|\n| 1 |')[0].rows[1], [[text('1')], []], 'Short rows are padded');
+  for (const odd of ['| a | b |\n|---|---|\n| 1 | 2 | 3 |', '| not | a table |\n| just | pipes |']) {
+    assert.equal(parse(odd)[0].type, 'raw', `Tables that cannot be modelled stay verbatim: ${odd}`);
+    roundtrip(odd);
+  }
+}
 
 // Text that looks like syntax is escaped so it reads back as the same text.
 for (const value of ['# not a heading', '- not a list', '1. not a list', '> not a quote', '---', '**not bold**',

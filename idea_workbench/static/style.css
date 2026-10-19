@@ -307,7 +307,8 @@ h3 .count-badge { margin-left: 6px; background: var(--soft); color: var(--muted)
 @keyframes fade-out { 0%, 60% { opacity: 1; } 100% { opacity: 0; } }
 .save-state[data-state="saving"] { color: var(--accent); }
 .save-state[data-state="error"] { color: var(--danger); }
-.page-title { display: block; width: 100%; padding: 0; border: 0; border-radius: 0; background: transparent; resize: none; overflow: hidden; font-size: 22px; font-weight: 700; line-height: 1.35; overflow-wrap: anywhere; }
+/* Grows with its text at any font size (full-page mode uses a larger one). */
+.page-title { display: block; width: 100%; padding: 0; border: 0; border-radius: 0; background: transparent; resize: none; overflow: hidden; field-sizing: content; min-height: 1.35em; font-size: 22px; font-weight: 700; line-height: 1.35; overflow-wrap: anywhere; }
 .page-title:focus { outline: none; }
 .page-title::placeholder { color: #b4bec7; }
 .kind-switch { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: 8px; background: var(--soft); }
@@ -433,3 +434,12 @@ body.is-page .note-editor { min-height: 55vh; font-size: 16px; }
 .journal-note-row textarea { flex: 1; min-height: 36px; resize: none; overflow: hidden; font-size: 13px; padding: 7px 9px; }
 .journal-note-row select { width: 84px; flex-shrink: 0; font-size: 12px; padding: 7px 5px; }
 .journal-note-row button { flex-shrink: 0; font-size: 12px; }
+
+/* Tables in notes */
+.note-editor table.note-table { display: block; max-width: 100%; overflow-x: auto; margin: 8px 0 12px; border-collapse: collapse; font-size: 13px; line-height: 1.55; white-space: normal; }
+.note-editor .note-table th, .note-editor .note-table td { min-width: 64px; padding: 6px 10px; border: 1px solid var(--line); vertical-align: top; text-align: left; overflow-wrap: anywhere; white-space: pre-wrap; }
+.note-editor .note-table th { background: var(--soft); font-weight: 650; }
+.note-editor .note-table tr:hover td { background: #fbfcfd; }
+.note-table-bar { position: fixed; z-index: 30; display: flex; gap: 1px; padding: 3px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); box-shadow: 0 10px 30px #19334628; }
+.note-table-bar button { min-height: 26px; padding: 2px 8px; border: 0; border-radius: 5px; background: transparent; font-size: 12px; }
+.note-table-bar button:hover { background: var(--soft); }

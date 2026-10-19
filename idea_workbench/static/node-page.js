@@ -69,10 +69,14 @@
       timer = setTimeout(() => (editor.isComposing() ? edited(field) : save()), SAVE_DELAY);
     }
 
+    // CSS field-sizing grows the title by itself; older browsers measure it, again whenever its size changes.
+    const autoSized = window.CSS?.supports?.('field-sizing', 'content');
     function fitTitle() {
+      if (autoSized) return;
       title.style.height = 'auto';
       title.style.height = `${title.scrollHeight}px`;
     }
+    if (!autoSized && window.ResizeObserver) new ResizeObserver(fitTitle).observe(title.parentElement);
 
     function load(node) {
       const pending = outbox.get(node.id) || {};
