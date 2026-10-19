@@ -81,8 +81,9 @@ def parser():
     note.add_argument("--by", required=True, choices=sorted(AUTHORS))
     note.add_argument("--kind", default="note", choices=sorted(WRITABLE_KINDS))
     note.add_argument("--run", help="Run this note is about (must belong to the node)")
-    react = sub.add_parser("react", help="Record the researcher's first reaction to a finished run")
-    react.add_argument("id")
+    react = sub.add_parser("react", help="Record the researcher's reaction to a finished run or experiment; marks it done")
+    react.add_argument("id", nargs="?", help="Run ID")
+    react.add_argument("--node", help="Experiment ID, for an outcome not tied to one run")
     react.add_argument("--outcome", required=True, choices=sorted(OUTCOMES))
     react.add_argument("--text", default="", help="The researcher's words, verbatim; agent interpretations go in note")
     entries = sub.add_parser("journal", help="Read journal entries, optionally for one node")
@@ -212,7 +213,7 @@ def main():
             elif args.action == "note":
                 result = store.add_entry(node_id=args.id, kind=args.kind, text=args.text, author=args.by, run_id=args.run)
             elif args.action == "react":
-                result = store.react(args.id, outcome=args.outcome, text=args.text)
+                result = store.react(args.id, node_id=args.node, outcome=args.outcome, text=args.text)
             elif args.action == "journal":
                 result = store.entries(args.id)
             elif args.action == "frontier":

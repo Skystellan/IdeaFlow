@@ -191,6 +191,18 @@ const clearOf = (points, bead) => points.every(p => Math.hypot(p.x - bead.x, p.y
     { id: 'r3', status: 'running', origin: 'managed' }, { id: 'r4', status: 'imported', origin: 'imported' }];
   const pending = model.awaitingReaction([entry('reaction', { outcome: 'mixed', run_id: 'r1' })], runs);
   assert.deepEqual(pending.map(r => r.id), ['r2']);
+
+  // The state the researcher picks is the state shown.
+  assert.equal(model.beadState(experiment('active'), [], []), 'running', 'An active experiment reads as in progress');
+  assert.equal(model.beadState(experiment('paused'), [], []), 'paused');
+  assert.equal(model.beadState(experiment('active'), reactions, [{ id: 'r', status: 'succeeded' }]), 'running', 'Reopening hides an old outcome');
+  assert.equal(model.beadState(experiment('active'), declined, []), 'running', 'Picking a state after declining overrides the decline');
+  // An outcome for the whole experiment answers runs that finished before it, not later ones.
+  const judged = [entry('reaction', { outcome: 'expected', n: 5 })];
+  const timed = [{ id: 'early', status: 'succeeded', finished_at: at(4) }, { id: 'late', status: 'succeeded', finished_at: at(6) },
+    { id: 'untimed', status: 'failed' }];
+  assert.deepEqual(model.awaitingReaction(judged, timed).map(r => r.id), ['late']);
+  assert.deepEqual(model.awaitingReaction([], timed).map(r => r.id), ['early', 'late', 'untimed'], 'Runs without a finish time still wait');
   const grouped = model.byNode([{ node_id: 'a', created_at: at(2) }, { node_id: 'b', created_at: at(1) }, { node_id: 'a', created_at: at(1) }]);
   assert.deepEqual(grouped.get('a').map(e => e.created_at), [at(1), at(2)]);
   assert.equal(model.label({ kind: 'reaction', outcome: 'surprised', author: 'human', decision: null, via: 'app' }), '你的原话 · 结果反应 · 与预期不符');

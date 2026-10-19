@@ -143,52 +143,43 @@
       return box;
     }
 
-    function reactionBox(run) {
-      const box = el('section', 'journal-prompt');
+    // One compact bar for every run that finished without a reaction.
+    function resultBox(node, pending) {
+      const box = el('section', 'journal-prompt result-prompt');
       box.dataset.prompt = 'reaction';
-      box.append(el('h3', '', '结果回来了，你的第一反应？'),
-        el('p', 'muted small', `${run.id} · ${RUN_STATUSES[run.status] || run.status} · ${when(run.finished_at)}`));
-      const choices = el('div', 'outcome-choices');
-      choices.setAttribute('role', 'radiogroup');
-      choices.setAttribute('aria-label', '与预期相比');
-      for (const [value, text] of Object.entries(OUTCOME_LABELS)) {
-        const option = el('label', 'outcome-choice');
-        const radio = el('input');
-        Object.assign(radio, { type: 'radio', name: `outcome-${run.id}`, value });
-        radio.dataset.draft = `outcome-${run.id}`;
-        option.dataset.outcome = value;
-        option.append(radio, el('span', '', text));
-        choices.append(option);
+      box.append(el('p', 'result-title', pending.length > 1 ? `${pending.length} 次运行结束了，结果如何？` : '运行结束了，结果如何？'),
+        el('p', 'muted small', pending.map(run => `${run.id} · ${RUN_STATUSES[run.status] || run.status}`).join('，')));
+      const words = el('input', 'result-words');
+      Object.assign(words, { type: 'text', placeholder: '一句话第一反应（可不填）', maxLength: 4000 });
+      words.dataset.draft = `reaction-${node.id}`;
+      words.setAttribute('aria-label', '第一反应');
+      const choices = el('div', 'result-choices'), error = errorLine();
+      for (const [outcome, text] of Object.entries(OUTCOME_LABELS)) {
+        const choice = button(text, 'result-choice');
+        choice.dataset.outcome = outcome;
+        // A single run gets its own reaction; several are answered together for the experiment.
+        const target = pending.length === 1 ? { run_id: pending[0].id } : { node_id: node.id };
+        choice.addEventListener('click', () => submit(choice, error, '/api/reactions', { ...target, outcome, text: words.value },
+          outcome === 'surprised' ? '已记下。可以从这条意外分出新问题。' : '已记下反应。', [`reaction-${node.id}`]));
+        choices.append(choice);
       }
-      const note = field('一句话（可不填）', `reaction-${run.id}`, '没过拟合，反而更稳', 2);
-      const error = errorLine(), save = button('记下反应');
-      box.append(choices, note, error, save);
-      save.addEventListener('click', () => {
-        const picked = box.querySelector('input[type="radio"]:checked');
-        if (!picked) { error.textContent = '先选一个：符合预期、与预期不符，或混合。'; error.hidden = false; return; }
-        const text = note.querySelector('textarea');
-        submit(save, error, '/api/reactions', { run_id: run.id, outcome: picked.value, text: text.value },
-          picked.value === 'surprised' ? '已记下。可以从这条意外分出新问题。' : '已记下反应。', [`outcome-${run.id}`, `reaction-${run.id}`]);
-      });
+      box.append(words, choices, error);
       return box;
     }
 
     function entryList(node, entries, runs) {
+      if (!entries.length) return null;
       const section = el('section', 'journal-entries');
-      section.append(el('h3', '', '原话记录'),
-        el('p', 'muted small', '只追加，不能修改。你的原话和 Agent 的话分开标注；上方的笔记可以随时改写。'));
-      if (!entries.length) {
-        section.append(el('p', 'journal-missing', '还没有原话记录。可以在下面写一句当时的想法；事后补写的内容会带上补写的时间。'));
-        return section;
-      }
+      const heading = el('h3', '', `原话记录 · ${entries.length}`);
+      heading.title = '只追加，不能修改；你的原话和 Agent 的话分开标注。笔记可以随时改写。';
       const list = el('ol', 'journal-list');
       for (const entry of entries) {
         const item = el('li', 'journal-entry');
         item.dataset.author = entry.author;
         item.dataset.kind = entry.kind;
         const late = isHindsight(entry, runs) ? '结果出来后补写' : '';
-        item.append(el('p', 'journal-meta', [when(entry.created_at), label(entry), late, entry.run_id].filter(Boolean).join(' · ')));
-        item.append(el('blockquote', 'journal-quote', entry.text || '（未写文字）'));
+        item.append(el('p', 'journal-meta', [when(entry.created_at), label(entry), late].filter(Boolean).join(' · ')));
+        if (entry.text) item.append(el('blockquote', 'journal-quote', entry.text));
         if (entry.kind === 'reaction' && entry.outcome === 'surprised') {
           const fork = button('从这里分出新问题', 'journal-fork');
           fork.addEventListener('click', () => onFork(node.id));
@@ -196,24 +187,32 @@
         }
         list.append(item);
       }
-      section.append(list);
+      section.append(heading, list);
       return section;
     }
 
     function noteForm(node) {
       const form = el('section', 'journal-note');
+      const input = el('textarea');
+      Object.assign(input, { rows: 1, maxLength: 4000, placeholder: '记一句当时的原话（只追加，不能修改）' });
+      input.dataset.draft = 'note-text';
+      input.setAttribute('aria-label', '追加原话');
       const kind = el('select');
       kind.dataset.draft = 'note-kind';
       kind.setAttribute('aria-label', '记录类型');
       NOTE_KINDS.forEach(([value, text]) => kind.append(new Option(text, value)));
-      const text = field('随手记一句', 'note-text', '先试一下 A，看看会不会好一些。暂时没想清楚为什么。', 3);
-      const error = errorLine(), actions = el('div', 'action-row'), save = button('追加（保存后不能修改）');
-      actions.append(kind, save);
-      form.append(text, actions, error);
-      const input = text.querySelector('textarea');
-      save.addEventListener('click', () => {
-        if (!input.value.trim()) { error.textContent = '先写一句再追加。'; error.hidden = false; input.focus(); return; }
+      const error = errorLine(), save = button('追加');
+      const row = el('div', 'journal-note-row');
+      row.append(input, kind, save);
+      form.append(row, error);
+      const send = () => {
+        if (!input.value.trim()) { input.focus(); return; }
         submit(save, error, '/api/entries', { node_id: node.id, kind: kind.value, text: input.value }, '已追加到原话记录。', ['note-text']);
+      };
+      save.addEventListener('click', send);
+      input.addEventListener('input', () => { input.style.height = 'auto'; input.style.height = `${input.scrollHeight}px`; });
+      input.addEventListener('keydown', event => {
+        if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.isComposing) { event.preventDefault(); send(); }
       });
       return form;
     }
@@ -233,19 +232,19 @@
       deferred = null;
       signature = next;
       nodeId = node.id;
-      const asks = [awaiting ? decisionBox(node, proposals) : null, ...pending.map(reactionBox)].filter(Boolean);
-      if (prompts === container) container.replaceChildren(...asks, entryList(node, entries, runs), noteForm(node));
+      const asks = [awaiting ? decisionBox(node, proposals) : null, pending.length ? resultBox(node, pending) : null].filter(Boolean);
+      const journal = [entryList(node, entries, runs), noteForm(node)].filter(Boolean);
+      if (prompts === container) container.replaceChildren(...asks, ...journal);
       else {
         prompts.replaceChildren(...asks);
-        container.replaceChildren(entryList(node, entries, runs), noteForm(node));
+        container.replaceChildren(...journal);
       }
       writeDrafts(saved.get(node.id) || {});
     }
 
     function focus(kind) {
       if (!kind) return;
-      const target = prompts.querySelector(kind === 'decision' ? '[data-draft="decision-text"]'
-        : '[data-prompt="reaction"] input[type="radio"]');
+      const target = prompts.querySelector(kind === 'decision' ? '[data-draft="decision-text"]' : '[data-prompt="reaction"] .result-choice');
       target?.focus({ preventScroll: false });
     }
 

@@ -21,7 +21,7 @@ STATIC_FILES = {
     **{f"/static/{name}": (name, "text/javascript") for name in (
         "app.js", "graph-layout.js", "thread-layout.js", "journal-model.js",
         "threads-view.js", "journal-view.js", "frontier-view.js",
-        "note-markdown.js", "note-dom.js", "note-editor.js", "note-menus.js", "note-outbox.js", "node-page.js")},
+        "note-markdown.js", "note-dom.js", "note-editor.js", "note-menus.js", "note-outbox.js", "node-state.js", "node-page.js")},
 }
 
 
@@ -119,7 +119,7 @@ def create_server(store, port=8770):
                         decision = only(data, {"node_id", "decision", "text", "expectation"})
                         self.reply(store.decide(**decision, via="app"))
                     elif self.command == "POST" and url.path == "/api/reactions":
-                        reaction = only(data, {"run_id", "outcome", "text"})
+                        reaction = only(data, {"run_id", "node_id", "outcome", "text"})
                         self.reply(store.react(**reaction, via="app"), 201)
                     else:
                         self.reply({"error": "Unknown endpoint"}, 404)

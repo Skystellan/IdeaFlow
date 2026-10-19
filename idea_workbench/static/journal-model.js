@@ -8,8 +8,8 @@
   const DECISION_LABELS = { approved: '批准', declined: '暂不做' };
   const AUTHOR_LABELS = { human: '你的原话', agent: 'Agent' };
   const STATE_LABELS = {
-    thought: '想法', awaiting: 'Agent 提议，等你决定', declined: '考虑过，暂不做', running: '运行中',
-    expected: '符合预期', surprised: '与预期不符', mixed: '结果混合', planned: '计划中', plain: '未记录反应',
+    thought: '想法', awaiting: 'Agent 提议，等你决定', declined: '考虑过，暂不做', running: '进行中', paused: '已暂停',
+    expected: '符合预期', surprised: '与预期不符', mixed: '结果混合', planned: '计划中', plain: '已完成，未判断',
   };
   const UNFINISHED = new Set(['queued', 'running']);
 
@@ -25,21 +25,25 @@
 
   const last = (entries, kind) => entries.filter(e => e.kind === kind).at(-1);
 
+  // The researcher's chosen status decides the state; an outcome shows once the experiment is done.
   function beadState(node, entries = [], runs = []) {
     if (node.kind === 'idea' || node.kind === 'insight') return 'thought';
     const decision = last(entries, 'decision');
-    // A decline describes the proposal; once the experiment is run anyway, its runs speak.
-    if (decision?.decision === 'declined' && !runs.length) return 'declined';
+    // A decline describes the proposal until the experiment is picked up again or run anyway.
+    if (decision?.decision === 'declined' && !runs.length && node.status === 'paused') return 'declined';
     if (node.status === 'proposed' && !decision && entries.some(e => e.kind === 'proposal')) return 'awaiting';
-    if (runs.some(run => UNFINISHED.has(run.status))) return 'running';
-    const reaction = last(entries, 'reaction');
-    if (reaction) return reaction.outcome;
-    return node.status === 'proposed' ? 'planned' : 'plain';
+    if (node.status === 'active' || runs.some(run => UNFINISHED.has(run.status))) return 'running';
+    if (node.status === 'paused') return 'paused';
+    if (node.status === 'proposed') return 'planned';
+    return last(entries, 'reaction')?.outcome || 'plain';
   }
 
   function awaitingReaction(entries = [], runs = []) {
     const reacted = new Set(entries.filter(e => e.kind === 'reaction' && e.run_id).map(e => e.run_id));
-    return runs.filter(run => !UNFINISHED.has(run.status) && run.origin !== 'imported' && !reacted.has(run.id));
+    // An outcome for the whole experiment answers every run that had finished by then.
+    const judged = entries.filter(e => e.kind === 'reaction' && !e.run_id).map(e => String(e.created_at)).sort().at(-1);
+    return runs.filter(run => !UNFINISHED.has(run.status) && run.origin !== 'imported' && !reacted.has(run.id)
+      && (!judged || String(run.finished_at || '') > judged));
   }
 
   function label(entry) {

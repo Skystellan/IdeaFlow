@@ -3,7 +3,6 @@
 
   const $ = id => document.getElementById(id);
   const KINDS = { idea: '想法', experiment: '实验', insight: '想法', next: '实验' };
-  const STATUSES = { active: '进行中', paused: '已暂停', done: '已完成', proposed: '待验证' };
   const RUN_STATUSES = { queued: '排队中', running: '运行中', succeeded: '成功', failed: '失败', interrupted: '已中断', imported: '已导入' };
   const RELATIONS = { continues: '延续', fork: '分叉', synthesis: '汇合' };
   const STORAGE_KEY = 'idea-workbench-ui-v1';
@@ -29,7 +28,7 @@
   let selectedId = null;
   let selectedRunId = '';
   let draft = saved.draft?.mode === 'create' && saved.draft.title?.trim() ? saved.draft : null;
-  let page = null;
+  let page = null, statePicker = null;
   let pane = 'record';
   let graphSignature = '';
   let detailSignature = '';
@@ -42,7 +41,6 @@
   let artifactRequest = 0;
   let runRequest = 0;
   let compareRequest = 0;
-  let contextVersion = '';
   let canvasListSignature = '';
   let feedbackTimer;
   let resizeGesture = null;
@@ -266,7 +264,9 @@
     // Reassigning value/disabled closes Chromium's open native select, even when unchanged.
     // Leave an in-progress choice alone while polling or repositioning the toolbar.
     if (!statusSaving && (document.activeElement !== statusControl || statusControl.dataset.statusNodeId !== node.id)) {
-      if (statusControl.value !== node.status) statusControl.value = node.status;
+      fillSelect(statusControl, window.NodeState.options(node, state).map(({ value, label }) => ({ value, label })), null);
+      const now = window.NodeState.current(node, state).value;
+      if (statusControl.value !== now) statusControl.value = now;
     }
     statusControl.dataset.statusNodeId = node.id;
     if (statusControl.disabled !== statusSaving) statusControl.disabled = statusSaving;
@@ -543,11 +543,12 @@
       button.dataset.kind = node.kind;
       button.dataset.status = node.status;
       button.dataset.category = ['idea', 'insight'].includes(node.kind) ? 'thought' : 'experiment';
-      button.title = `${nodeName(node.id)}\n${STATUSES[node.status]}\n拖动可调整位置 · Alt＋方向键也可移动`;
-      button.setAttribute('aria-label', `${KINDS[node.kind]}：${node.title}，${STATUSES[node.status]}`);
+      const now = window.NodeState.current(node, state);
+      button.title = `${nodeName(node.id)}\n${now.label}\n拖动可调整位置 · Alt＋方向键也可移动`;
+      button.setAttribute('aria-label', `${KINDS[node.kind]}：${node.title}，${now.label}`);
       const top = el('span', 'node-top');
-      const badge = el('span', 'status-badge', STATUSES[node.status]);
-      badge.dataset.status = node.status;
+      const badge = el('span', 'status-badge');
+      badge.append(window.NodeState.icon(now.state), now.label);
       top.append(el('span', 'kind-tag', KINDS[node.kind]), badge);
       const bottom = el('span', 'node-bottom');
       const crossCanvas = [...incoming.get(node.id), ...outgoing.get(node.id)].some(edge => ownerId(nodeById.get(edge.source)) !== ownerId(nodeById.get(edge.target)));
@@ -836,12 +837,6 @@
 
   function resetContext() {
     contextRequest++;
-    contextVersion = '';
-    $('context-text').value = '';
-    $('copy-context').disabled = true;
-    $('generate-context').disabled = false;
-    $('generate-context').textContent = '生成 / 更新上下文';
-    message($('context-message'), '');
   }
 
   function resetArtifact() {
@@ -890,23 +885,22 @@
     if (pane === 'runs') renderRuns();
   }
 
+  // One compact row per link: direction, the linked node, and a remove button.
   function renderRelations(container, edges, source) {
     const fragment = document.createDocumentFragment();
-    if (!edges.length) fragment.append(el('p', 'muted small', source ? '研究起点 · 没有上游来源。' : '尚无后续记录。从下方选择下一步。'));
     for (const edge of edges) {
       const id = source ? edge.source : edge.target;
-      const item = el('div', 'relation-item');
-      const button = el('button', 'relation-link', nodeName(id));
-      button.type = 'button';
-      button.addEventListener('click', () => selectNode(id, true));
-      const node = nodeById.get(id);
-      item.append(button, el('p', '', [node && STATUSES[node.status], RELATIONS[edge.relation] || '来源关系'].filter(Boolean).join(' · ')));
-      if (edge.reason) item.append(el('p', '', edge.reason));
-      const remove = el('button', 'relation-remove', '移除连线');
+      const item = el('div', 'link-row');
+      const link = el('button', 'relation-link', nodeById.get(id)?.title || id);
+      link.type = 'button';
+      link.title = [RELATIONS[edge.relation], edge.reason].filter(Boolean).join(' · ');
+      link.addEventListener('click', () => selectNode(id, true));
+      const remove = el('button', 'link-remove', '×');
       remove.type = 'button';
+      remove.title = '移除连线（两个节点都保留）';
       remove.setAttribute('aria-label', `移除连线：${nodeName(edge.source)} → ${nodeName(edge.target)}`);
       remove.addEventListener('click', () => removeConnection(edge, remove));
-      item.append(remove);
+      item.append(el('span', 'link-direction', source ? '来自' : '通向'), link, remove);
       fragment.append(item);
     }
     container.replaceChildren(fragment);
@@ -929,14 +923,8 @@
       renderRelations($('source-list'), incoming.get(node.id), true);
       renderRelations($('target-list'), outgoing.get(node.id), false);
     }
-    syncDetailStatus();
+    statePicker?.render(node, state);
     renderRuns();
-    if (contextVersion && contextVersion !== evidenceSignature()) message($('context-message'), '研究记录或运行已更新。下方保留上次生成的内容，请重新生成以获取最新上下文。');
-  }
-
-  function evidenceSignature() {
-    const upstream = ancestors(selectedId);
-    return JSON.stringify([state.nodes.filter(node => upstream.has(node.id)), state.edges.filter(edge => upstream.has(edge.target)), state.runs.filter(run => upstream.has(run.experiment_id)), state.entries.filter(entry => upstream.has(entry.node_id))]);
   }
 
   function fillSelect(select, items, placeholder, preferred = select.value) {
@@ -959,6 +947,9 @@
       runsSignature = '';
       resetArtifact();
     }
+    $('detail-tabs').hidden = !runs.length;
+    $('run-count').textContent = runs.length || '';
+    if (!runs.length && pane === 'runs') showPane('record');
     fillSelect($('run-select'), runs.map(run => ({ value: run.id, label: runLabel(run) })), null, selectedRunId);
     $('run-select').value = selectedRunId;
     $('run-select').disabled = !runs.length;
@@ -1151,61 +1142,44 @@
     finally { canvasSaving = false; $('save-canvas').disabled = $('close-new-canvas').disabled = false; }
   }
 
-  async function changeNodeStatus(event) {
-    const node = nodeById.get(selectedId), status = event.currentTarget.value;
-    if (!node || statusSaving || status === node.status) return;
-    if (state.frontier?.awaiting_decision?.some(item => item.node_id === node.id)) {
-      event.currentTarget.value = node.status;
-      message($('feedback'), '这是 Agent 的提议：请在详情里写一句理由后批准，或选择暂不做。');
-      showPane('record');
-      journalView.focus('decision');
-      return;
-    }
+  // Status and outcome choices from the page's state menu or the canvas toolbar.
+  async function applyState(value) {
+    const node = nodeById.get(selectedId);
+    if (!node || statusSaving) return;
     statusSaving = true;
-    $('node-status').disabled = $('detail-status-select').disabled = true;
-    try {
-      const updated = await api(`/api/nodes/${encodeURIComponent(node.id)}`, { method: 'PATCH', body: JSON.stringify({ status }) });
-      await refreshAfterWrite(updated);
-    } catch (error) { message($('feedback'), `状态未保存：${error.message}`, true); }
-    finally { statusSaving = false; $('detail-status-select').disabled = false; positionNodeActions(); syncDetailStatus(); }
+    $('node-status').disabled = true;
+    const kind = await window.NodeState.apply({
+      api, node, value, refresh: () => refreshAfterWrite(), notify: (text, error) => message($('feedback'), text, error),
+      onDecide: () => { showPane('record'); journalView.focus('decision'); },
+    });
+    statusSaving = false;
+    $('node-status').disabled = false;
+    positionNodeActions();
+    renderDetails();
+    if (kind === 'outcome') message($('feedback'), '已记下结果判断。想补一句为什么，可以写在原话记录里。');
   }
 
-  function syncDetailStatus() {
-    const node = nodeById.get(selectedId), control = $('detail-status-select');
-    if (node && !statusSaving && document.activeElement !== control && control.value !== node.status) control.value = node.status;
+  function closePageMenu(focus = false) {
+    $('page-menu').hidden = true;
+    $('page-more').setAttribute('aria-expanded', 'false');
+    if (focus) $('page-more').focus();
   }
 
-  async function generateContext() {
-    if (!selectedId) return;
-    const id = selectedId, request = ++contextRequest, version = evidenceSignature();
-    $('generate-context').disabled = true;
-    $('generate-context').textContent = '正在生成…';
-    message($('context-message'), '');
+  async function copyText(text, done) {
     try {
-      const result = await api(`/api/context?${new URLSearchParams({ node: id })}`);
-      if (request !== contextRequest || id !== selectedId) return;
-      if (typeof result.text !== 'string') throw new Error('上下文响应缺少 text 文本。');
-      $('context-text').value = result.text;
-      $('copy-context').disabled = !result.text;
-      contextVersion = version;
-      message($('context-message'), version === evidenceSignature() ? '已生成。复制后粘贴到 Codex 即可继续研究。' : '生成过程中记录已变化，可再次更新获取最新上下文。');
-    } catch (error) {
-      if (request === contextRequest) message($('context-message'), `生成失败：${error.message}`, true);
-    } finally {
-      if (request === contextRequest) { $('generate-context').disabled = false; $('generate-context').textContent = '生成 / 更新上下文'; }
-    }
+      await navigator.clipboard.writeText(text);
+      message($('feedback'), done);
+    } catch { message($('feedback'), '没有复制成功：系统未允许写入剪贴板。', true); }
   }
 
   async function copyContext() {
-    const text = $('context-text').value;
+    closePageMenu();
+    const id = selectedId, request = ++contextRequest;
+    if (!id) return;
     try {
-      await navigator.clipboard.writeText(text);
-      message($('context-message'), '已复制。可粘贴给 Codex。');
-    } catch {
-      $('context-text').focus();
-      $('context-text').select();
-      message($('context-message'), '浏览器未允许自动复制，已选中文本。请按 ⌘C / Ctrl+C 复制。');
-    }
+      const result = await api(`/api/context?${new URLSearchParams({ node: id })}`);
+      if (request === contextRequest) await copyText(result.text, '已复制给 Codex 的上下文，可以直接粘贴。');
+    } catch (error) { message($('feedback'), `上下文没有生成：${error.message}`, true); }
   }
 
   async function loadRun() {
@@ -1361,9 +1335,21 @@
     nodeButtons.get(id)?.focus({ preventScroll: true });
   });
   $('resume-draft').addEventListener('click', resumeDraft);
-  $('node-status').addEventListener('change', changeNodeStatus);
-  $('detail-status-select').addEventListener('change', changeNodeStatus);
-  $('delete-node-detail').addEventListener('click', requestDeletion);
+  $('node-status').addEventListener('change', event => applyState(event.currentTarget.value));
+  $('delete-node-detail').addEventListener('click', () => { closePageMenu(); requestDeletion(); });
+  $('page-more').addEventListener('click', () => {
+    const open = $('page-menu').hidden;
+    $('page-menu').hidden = !open;
+    $('page-more').setAttribute('aria-expanded', String(open));
+    if (open) $('page-menu').querySelector('button')?.focus();
+  });
+  $('page-menu').addEventListener('keydown', event => {
+    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closePageMenu(true); }
+  });
+  document.addEventListener('pointerdown', event => {
+    if (!$('page-menu').hidden && !event.target.closest('#page-menu, #page-more')) closePageMenu();
+  });
+  $('copy-node-id').addEventListener('click', () => { closePageMenu(); if (selectedId) copyText(selectedId, `已复制 ${selectedId}`); });
   $('open-page').addEventListener('click', () => { page.setPageMode(true); page.focusBody(); });
   $('node-kind').addEventListener('change', async event => {
     const control = event.currentTarget, node = nodeById.get(selectedId);
@@ -1494,7 +1480,6 @@
   });
   $('run-select').addEventListener('change', loadRun);
   document.querySelectorAll('[data-artifact]').forEach(button => button.addEventListener('click', () => loadArtifact(button.dataset.artifact, button)));
-  $('generate-context').addEventListener('click', generateContext);
   $('copy-context').addEventListener('click', copyContext);
   $('open-compare').addEventListener('click', () => {
     $('options-dialog').close();
@@ -1539,6 +1524,7 @@
     container: $('journal-section'), prompts: $('prompt-section'), api, refresh: () => refreshAfterWrite(),
     notify: text => message($('feedback'), text), onFork: id => createNode('idea', [id]),
   });
+  statePicker = window.NodeState.createPicker({ button: $('state-button'), menu: $('state-menu'), onPick: applyState });
   page = window.NodePage.create({
     title: $('detail-title'), kindButtons: [...document.querySelectorAll('.kind-switch [data-kind]')],
     editorRoot: $('note-editor'), saveState: $('save-state'), pageToggle: $('toggle-page'), api,

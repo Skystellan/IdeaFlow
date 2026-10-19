@@ -33,3 +33,4 @@ jobs:
           node tests/test_idea_workbench_threads.cjs
           node tests/test_idea_workbench_markdown.cjs
           node tests/test_idea_workbench_outbox.cjs
+          node tests/test_idea_workbench_state.cjs

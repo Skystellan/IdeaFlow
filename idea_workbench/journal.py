@@ -95,6 +95,11 @@ def frontier(state, canvas_id=None):
     proposed = {e["node_id"]: e["text"] for e in entries if e["kind"] == "proposal"}
     decided = {e["node_id"] for e in entries if e["kind"] == "decision"}
     reacted = {e["run_id"] for e in entries if e["kind"] == "reaction" and e["run_id"]}
+    # An outcome given for the whole experiment answers every run that had finished by then.
+    judged = {}
+    for e in entries:
+        if e["kind"] == "reaction" and not e["run_id"]:
+            judged[e["node_id"]] = max(judged.get(e["node_id"], ""), e["created_at"])
 
     def node_item(node, **extra):
         return dict(node_id=node["id"], title=node["title"], canvas_id=node["canvas_id"], **extra)
@@ -105,7 +110,8 @@ def frontier(state, canvas_id=None):
 
     pending = [n for n in nodes.values() if n["status"] == "proposed"]
     runs = [r for r in state["runs"] if r["experiment_id"] in nodes]
-    finished = [r for r in runs if r["status"] not in UNFINISHED_RUNS and r.get("origin") != "imported" and r["id"] not in reacted]
+    finished = [r for r in runs if r["status"] not in UNFINISHED_RUNS and r.get("origin") != "imported" and r["id"] not in reacted
+                and (r["experiment_id"] not in judged or (r.get("finished_at") or "") > judged[r["experiment_id"]])]
     surprises = sorted((e for e in entries if e["kind"] == "reaction" and e["outcome"] == "surprised"),
                        key=lambda e: e["created_at"], reverse=True)[:5]
     return {

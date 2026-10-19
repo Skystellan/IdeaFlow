@@ -361,16 +361,36 @@ class Store:
             updated = self._revise(db, node, {"status": "active" if decision == "approved" else "paused"})
         return {"node": updated, "entries": entries}
 
-    def react(self, run_id, *, outcome, text="", via="cli"):
-        """The researcher's first reaction to a finished run. Agent interpretations are notes."""
+    def react(self, run_id=None, *, node_id=None, outcome, text="", via="cli"):
+        """The researcher's reaction to a finished run, or to the experiment as a whole.
+
+        A reaction is their judgement of the result, so it also marks the experiment done.
+        Agent interpretations are notes.
+        """
+        if (run_id is None) == (node_id is None):
+            raise ValueError("Give either run_id or node_id")
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            run = self._run(db, text_field(run_id, "run_id", 200, True))
-            if run["status"] in journal.UNFINISHED_RUNS:
-                raise ValueError("Record a reaction after the run finishes")
-            entry = journal.build_entry(node_id=run["experiment_id"], kind="reaction", author="human", text=text,
-                                        run_id=run["id"], outcome=outcome, via=via)
-            return journal.insert_entry(db, entry)
+            if run_id is not None:
+                run = self._run(db, text_field(run_id, "run_id", 200, True))
+                if run["status"] in journal.UNFINISHED_RUNS:
+                    raise ValueError("Record a reaction after the run finishes")
+                node = self._node(db, run["experiment_id"])
+            else:
+                node = self._node(db, text_field(node_id, "node_id", 200, True))
+                if node["kind"] not in {"experiment", "next"}:
+                    raise ValueError("Only an experiment has an outcome")
+                if self._undecided(db, node["id"]):
+                    raise ValueError("This proposal awaits the researcher's decision")
+                runs = [json.loads(r[0]) for r in db.execute("SELECT data FROM runs WHERE experiment_id=?", (node["id"],))]
+                if any(r["status"] in journal.UNFINISHED_RUNS for r in runs):
+                    raise ValueError("A run has not finished yet; record the outcome after it does")
+            entry = journal.build_entry(node_id=node["id"], kind="reaction", author="human", text=text,
+                                        run_id=run_id and run["id"], outcome=outcome, via=via)
+            journal.insert_entry(db, entry)
+            if node["status"] != "done":
+                self._revise(db, node, {"status": "done"})
+            return entry
 
     @staticmethod
     def _run(db, run_id):

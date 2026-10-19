@@ -17,6 +17,7 @@
   <script src="/static/note-menus.js" defer></script>
   <script src="/static/note-editor.js" defer></script>
   <script src="/static/note-outbox.js" defer></script>
+  <script src="/static/node-state.js" defer></script>
   <script src="/static/node-page.js" defer></script>
   <script src="/static/app.js" defer></script>
 </head>
@@ -61,7 +62,7 @@
           <label class="sr-only" for="node-kind">节点类型</label>
           <select id="node-kind"><option value="thought">想法</option><option value="experiment">实验</option></select>
           <label class="sr-only" for="node-status">节点状态</label>
-          <select id="node-status"><option value="active">进行中</option><option value="proposed">待验证</option><option value="done">已完成</option><option value="paused">已暂停</option></select>
+          <select id="node-status"></select>
           <button id="connect-selected" type="button">连线</button>
           <button id="open-page" type="button" title="打开为整页（双击节点）">整页</button>
           <button id="delete-node" type="button" class="danger">删除</button>
@@ -87,9 +88,10 @@
           <span class="selection-tip">⌘ 拖动框选</span>
         </div>
         <div id="thread-legend" class="thread-legend" aria-label="线程图图例" hidden>
+          <span><i data-state="planned"></i>计划中</span><span><i data-state="running"></i>进行中</span>
           <span><i data-state="expected"></i>符合预期</span><span><i data-state="surprised"></i>与预期不符</span>
-          <span><i data-state="mixed"></i>结果混合</span><span><i data-state="plain"></i>未记录反应</span>
-          <span><i data-state="awaiting"></i>Agent 提议，等你决定</span><span><i data-state="running"></i>运行中</span>
+          <span><i data-state="mixed"></i>结果混合</span><span><i data-state="plain"></i>已完成，未判断</span>
+          <span><i data-state="paused"></i>已暂停</span><span><i data-state="awaiting"></i>Agent 提议，等你决定</span>
           <span><i data-state="thought"></i>想法</span>
         </div>
         <div id="empty-graph" class="empty-state" hidden>
@@ -107,8 +109,14 @@
         <span id="detail-owner" class="page-crumb"></span>
         <span id="save-state" class="save-state" role="status" aria-live="polite"></span>
         <button id="toggle-page" class="quiet" type="button" aria-pressed="false" aria-label="展开为整页" title="展开为整页">⤢</button>
-        <button id="delete-node-detail" type="button" class="quiet danger">删除</button>
+        <button id="page-more" class="quiet" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="page-menu" aria-label="更多操作" title="更多操作">⋯</button>
         <button id="close-detail" class="quiet" type="button" aria-label="关闭详情" title="关闭（Esc）">✕</button>
+        <div id="page-menu" class="page-menu" role="menu" aria-label="节点操作" hidden>
+          <p id="detail-time" class="page-menu-meta"></p>
+          <button id="copy-node-id" type="button" role="menuitem">复制节点 ID</button>
+          <button id="copy-context" type="button" role="menuitem">复制给 Codex 的上下文</button>
+          <button id="delete-node-detail" type="button" role="menuitem" class="danger">删除节点</button>
+        </div>
       </div>
       <div id="empty-detail" hidden></div>
       <div id="node-detail" hidden>
@@ -116,37 +124,39 @@
           <label class="sr-only" for="detail-title">标题</label>
           <textarea id="detail-title" class="page-title" rows="1" maxlength="200" placeholder="未命名" spellcheck="false"></textarea>
           <div class="page-props">
-            <span class="prop-label" id="kind-label">类型</span>
-            <span class="kind-switch" role="group" aria-labelledby="kind-label">
+            <span class="kind-switch" role="group" aria-label="节点类型">
               <button type="button" data-kind="thought" aria-pressed="false">想法</button>
               <button type="button" data-kind="experiment" aria-pressed="false">实验</button>
             </span>
-            <label class="prop-label" for="detail-status-select">状态</label>
-            <select id="detail-status-select" class="detail-status-select"><option value="active">进行中</option><option value="proposed">待验证</option><option value="done">已完成</option><option value="paused">已暂停</option></select>
+            <span class="state-picker">
+              <button id="state-button" class="state-button" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="state-menu"></button>
+              <span id="state-menu" class="state-menu" role="menu" aria-label="节点状态" hidden></span>
+            </span>
           </div>
-          <p id="detail-time" class="page-meta"></p>
           <p id="node-action-error" class="notice error" role="alert" hidden></p>
         </div>
-        <div class="detail-tabs" role="group" aria-label="详情视图">
+        <div id="detail-tabs" class="detail-tabs" role="group" aria-label="详情视图" hidden>
           <button type="button" data-pane="record" aria-pressed="true" aria-controls="pane-record">笔记</button>
-          <button type="button" data-pane="runs" aria-pressed="false" aria-controls="pane-runs">运行与证据</button>
-          <button type="button" data-pane="context" aria-pressed="false" aria-controls="pane-context">Codex 上下文</button>
+          <button type="button" data-pane="runs" aria-pressed="false" aria-controls="pane-runs">运行 <span id="run-count" class="tab-count"></span></button>
         </div>
         <section id="pane-record" class="detail-pane">
           <div id="prompt-section" class="journal-section" aria-label="等你回应"></div>
           <div id="note-editor" aria-label="笔记"></div>
           <section id="journal-section" class="journal-section detail-section" aria-label="原话记录"></section>
-          <section class="detail-section"><h3>从哪里来</h3><div id="source-list"></div></section>
-          <section class="detail-section"><h3>已经走向哪里</h3><div id="target-list"></div></section>
-          <section class="detail-section"><h3>从这里继续</h3><p class="muted small">新节点会自动连到当前节点。</p>
-            <div class="derive-actions">
-              <button type="button" data-derive="idea">＋ 想法</button>
-              <button type="button" data-derive="experiment">＋ 实验</button>
+          <section class="detail-section links-section" aria-labelledby="links-heading">
+            <div class="section-heading">
+              <h3 id="links-heading">连接</h3>
+              <span class="derive-actions" title="新节点会自动连到当前节点">
+                <button type="button" data-derive="idea">＋ 想法</button>
+                <button type="button" data-derive="experiment">＋ 实验</button>
+              </span>
             </div>
+            <div id="source-list"></div>
+            <div id="target-list"></div>
           </section>
         </section>
         <section id="pane-runs" class="detail-pane" hidden>
-          <p class="muted small">包含当前节点及其全部上游实验的运行。运行状态与研究节点状态独立记录。</p>
+          <p class="muted small">当前节点及其上游实验的运行。</p>
           <label for="run-select">选择运行</label><select id="run-select"></select>
           <p id="run-empty" class="notice" hidden>暂无关联运行。请让 Codex / CLI 启动实验并关联实验节点，或导入已有运行。</p>
           <div id="run-content"></div>
@@ -162,12 +172,6 @@
             </div>
             <div id="artifact-view" hidden><p id="artifact-title" class="mono small"></p><p id="artifact-error" class="notice error" role="alert" hidden></p><pre id="artifact-text" tabindex="0"></pre></div>
           </section>
-        </section>
-        <section id="pane-context" class="detail-pane" hidden>
-          <h3>交给 Codex 的研究上下文</h3><p class="muted small">从本地记录生成，包含来源与运行证据。生成后可复制给 Codex；本页面不启动终端命令。</p>
-          <div class="action-row"><button id="generate-context" class="primary" type="button">生成 / 更新上下文</button><button id="copy-context" type="button" disabled>复制</button></div>
-          <p id="context-message" class="notice" role="status" hidden></p>
-          <label class="sr-only" for="context-text">可复制的 Codex 上下文</label><textarea id="context-text" class="context-text mono" readonly placeholder="点击生成，从 API 获取当前节点的上下文。"></textarea>
         </section>
       </div>
     </aside>
