@@ -22,6 +22,7 @@
   const TABLE = /^ {0,3}\|/;
   const MATH = /^ {0,3}\$\$/;
   const SAFE_LINK = /^(?:https?:\/\/|mailto:)/i;
+  const BREAK = /^<br[ \t]*\/?[ \t]*>/i;
 
   function startsBlock(line) {
     return HEADING.test(line) || DIVIDER.test(line) || FENCE.test(line) || LIST.test(line) || QUOTE.test(line)
@@ -63,6 +64,8 @@
     for (let i = 0; i < source.length;) {
       const char = source[i];
       if (char === '\\' && PUNCTUATION.test(source[i + 1] || '')) { plain += source[i + 1]; i += 2; continue; }
+      const lineBreak = char === '<' && BREAK.exec(source.slice(i));
+      if (lineBreak) { plain += '\n'; i += lineBreak[0].length; continue; }
       if ('`[*~'.includes(char)) {
         const rest = source.slice(i);
         const rule = INLINE_RULES.find(candidate => candidate.pattern.test(rest));
@@ -83,9 +86,17 @@
 
   function parseInline(source) { return normalize(inline(String(source || ''))); }
 
-  const escapeAll = value => value.replace(/[\\`*~[\]!]/g, '\\$&');
+  const escapeAll = value => value.replace(/[\\`*~[\]!<]/g, '\\$&');
   const encodeUrl = url => url.replace(/[\s()<>]/g, char => `%${char.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0')}`);
   function unescapeUrl(url) { return url.replace(/\\([!-/:-@[-`{-~])/g, '$1'); }
+
+  // Blank and edge lines would become paragraph separators or be trimmed on save.
+  // Explicit breaks keep them inside the same block; ordinary single newlines stay readable.
+  function preserveBreaks(text) {
+    const lines = text.split('\n');
+    return lines.map((line, index) => line + (index === lines.length - 1 ? ''
+      : !line.trim() || !lines[index + 1].trim() ? '<br>' : '\n')).join('');
+  }
 
   function render(spans, escape) {
     let out = '', open = [];
@@ -105,7 +116,7 @@
           out += mark === 'href' ? '[' : DELIMITERS[mark];
         }
       }
-      out += span.code ? span.text : escape ? escapeAll(span.text) : span.text;
+      out += span.code ? span.text : preserveBreaks(escape ? escapeAll(span.text) : span.text);
     }
     close(() => false);
     return out;
@@ -118,7 +129,10 @@
   // Markdown cannot write whitespace at the edge of emphasis ("** a**"), so it moves outside the mark.
   function tidy(spans) {
     const result = [];
-    for (const original of normalize(spans || [])) {
+    // Inline code cannot contain blank lines in Markdown; keep the code on each side of the break.
+    const lines = (spans || []).flatMap(span => span.code ? span.text.split(/(\n+)/).map(text =>
+      ({ ...span, text, code: text.startsWith('\n') ? undefined : true })) : [span]);
+    for (const original of normalize(lines)) {
       const span = { ...original, code: original.code && !original.text.includes('`') || undefined,
         href: original.href ? encodeUrl(original.href) : undefined };
       const [, before, core, after] = /^(\s*)([\s\S]*?)(\s*)$/.exec(span.text);
@@ -138,7 +152,7 @@
       if (canonical(parseInline(out)) === expected) return out;
     }
     // Overlapping marks Markdown cannot express: keep every character, drop the formatting.
-    return finish(escapeAll(clean.map(span => span.text).join('')));
+    return finish(preserveBreaks(escapeAll(clean.map(span => span.text).join(''))));
   }
 
   // ---- Blocks ----
@@ -188,7 +202,7 @@
 
   function serializeTable(block) {
     const columns = Math.max(1, ...block.rows.map(row => row.length));
-    const cell = spans => serializeInline((spans || []).map(span => ({ ...span, text: span.text.replace(/\n/g, ' ') })))
+    const cell = spans => serializeInline(spans || [], out => out.replace(/\n/g, '<br>'))
       .replace(/\|/g, '\\|');
     const line = row => `| ${Array.from({ length: columns }, (_, index) => cell(row[index])).join(' | ')} |`.replace(/ {2}\|/g, ' |');
     const rule = Array.from({ length: columns }, (_, index) => ({ left: ':---', right: '---:', center: ':---:' }[block.align?.[index]] || '---'));
@@ -353,8 +367,7 @@
   function serializeBlock(block) {
     switch (block.type) {
       case 'heading': {
-        const oneLine = block.inline.map(span => ({ ...span, text: span.text.replace(/\n/g, ' ') }));
-        return `${'#'.repeat(Math.min(6, Math.max(1, block.level || 1)))} ${serializeInline(oneLine)}`.trimEnd();
+        return `${'#'.repeat(Math.min(6, Math.max(1, block.level || 1)))} ${serializeInline(block.inline, out => out.replace(/\n/g, '<br>'))}`.trimEnd();
       }
       case 'quote': return serializeInline(block.inline, out => out.split('\n').map(escapeVerbatim).join('\n'))
         .split('\n').map(line => `> ${line}`.trimEnd()).join('\n');
@@ -373,7 +386,7 @@
   }
 
   function isEmpty(block) {
-    if (block.type === 'paragraph') return !block.inline.some(span => span.text.trim());
+    if (block.type === 'paragraph') return !block.inline.some(span => span.text.trim() || span.text.includes('\n'));
     if (block.type === 'list') return !block.items.length;
     if (block.type === 'raw' || block.type === 'code') return !block.text.trim();
     if (block.type === 'table') return !block.rows?.length;

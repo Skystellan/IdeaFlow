@@ -17,6 +17,35 @@ assert.deepEqual(parse(legacy), [
 roundtrip(legacy, 'Plain text survives a save unchanged');
 roundtrip('train_rmse_9 vs train_rmse_3, step 2*3 = 6, see [1] and C:\\tmp', 'Ordinary symbols are not escaped needlessly');
 
+// Shift+Enter is an inline break, even when repeated or left at the end of a note.
+for (const value of ['第一段\n\n第二段', '第一段\n\n\n第二段', '\n开头', '结尾\n', '结尾\n\n',
+  '第一段\n \n第二段', '\n\n']) {
+  for (const type of ['paragraph', 'quote', 'list', 'heading', 'table']) {
+    const block = type === 'list'
+      ? { type, ordered: false, items: [{ inline: [text(value)], checked: null, children: [] }] }
+      : type === 'heading' ? { type, level: 2, inline: [text(value)] }
+      : type === 'table' ? { type, align: [''], rows: [[[text(value)]]] }
+      : { type, inline: [text(value)] };
+    const saved = serialize([block]);
+    assert.deepEqual(parse(saved), [block], `${type} preserves intentional blank lines: ${JSON.stringify(value)}`);
+    assert.equal(serialize(parse(saved)), saved, 'Reopening and saving again does not remove another line');
+  }
+}
+assert.deepEqual(parseInline('a<br><br/>b<br />'), [text('a\n\nb\n')]);
+assert.deepEqual(parse(serialize([{ type: 'paragraph', inline: [text('literal <br> and <script>')] }])),
+  [{ type: 'paragraph', inline: [text('literal <br> and <script>')] }], 'Typed HTML stays literal text');
+assert.deepEqual(parseInline('`<br>` <br onclick=alert(1)>'),
+  [{ text: '<br>', code: true }, text(' <br onclick=alert(1)>')], 'Only plain break tags are recognized outside code');
+{
+  const formatted = [{ type: 'paragraph', inline: [{ text: '加粗', bold: true }, text('\n\n'), { text: '斜体', italic: true }] }];
+  assert.deepEqual(parse(serialize(formatted)), formatted, 'Formatting on both sides of blank lines survives');
+  const task = [{ type: 'list', ordered: false, items: [{ inline: [text('任务\n\n下一行\n')], checked: false, children: [] }] }];
+  assert.deepEqual(parse(serialize(task)), task, 'Task items retain their blank lines');
+  assert.deepEqual(parse(serialize([{ type: 'paragraph', inline: [{ text: 'A\n\nB', code: true }] }])),
+    [{ type: 'paragraph', inline: [{ text: 'A', code: true }, text('\n\n'), { text: 'B', code: true }] }],
+    'Shift+Enter inside inline code preserves the code on either side of the blank line');
+}
+
 // Every block the editor offers survives a save.
 const note = [
   '# 问题', '## 设置', '### 细节',
@@ -114,8 +143,7 @@ for (let round = 0; round < 5000; round++) {
     ...(random(4) === 0 ? { bold: true } : {}), ...(random(5) === 0 ? { italic: true } : {}),
   }));
   const full = plainText(spans);
-  // A blank line inside a block would legitimately start a new block.
-  if (!full.trim() || /\n[ \t]*\n/.test(full.trim())) continue;
+  if (!full.trim()) continue;
   const block = [{ type: 'paragraph', inline: spans }, { type: 'quote', inline: spans },
     { type: 'list', ordered: false, items: [{ inline: spans, checked: null, children: [] }] }][round % 3];
   const saved = serialize([block]), restored = parse(saved);

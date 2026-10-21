@@ -51,8 +51,9 @@
 
   function filled(element, spans) {
     element.append(inlineNodes(spans));
-    // An empty block needs a <br> so the caret has somewhere to go.
-    if (!element.textContent) element.append(document.createElement('br'));
+    // A final break needs one more <br> for the caret, matching the browser's editing DOM.
+    const text = (spans || []).map(span => span.text).join('');
+    if (!text || text.endsWith('\n')) element.append(document.createElement('br'));
     return element;
   }
 
@@ -223,7 +224,7 @@
   function readTable(table, hoisted) {
     const rows = [...table.querySelectorAll('tr')].filter(row => row.closest('table') === table);
     const cells = rows.map(row => [...row.children].filter(cell => cell.tagName === 'TD' || cell.tagName === 'TH')
-      .map(cell => inlineOf(cell, hoisted).map(span => ({ ...span, text: span.text.replace(/\n/g, ' ') }))));
+      .map(cell => inlineOf(cell, hoisted)));
     const header = rows[0] ? [...rows[0].children] : [];
     return { type: 'table', align: header.map(cell => cell.dataset?.align || ''), rows: cells.length ? cells : [[[]]] };
   }
