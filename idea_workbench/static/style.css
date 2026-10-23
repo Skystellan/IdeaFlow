@@ -247,7 +247,6 @@ h3 .count-badge { margin-left: 6px; background: var(--soft); color: var(--muted)
 .thread-line.is-alive { stroke: #7f8fd6; }
 .thread-line.is-tentative { stroke-dasharray: 5 5; stroke-width: 2; }
 .thread-link { fill: none; stroke: #a0adb9; stroke-width: 1.6; stroke-linejoin: round; }
-.thread-link.is-merge { stroke-dasharray: 3 4; }
 .thread-link.is-surprise { stroke: #c4532d; stroke-width: 2; }
 .thread-label { position: absolute; z-index: 2; min-height: 26px; padding: 3px 8px; border-radius: 13px; font-size: 12px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; text-align: left; background: var(--surface); }
 .thread-label[data-alive="false"] { color: var(--muted); font-weight: 500; }

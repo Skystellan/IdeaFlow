@@ -83,7 +83,7 @@
     for (const link of layout.links) {
       const surprise = states.get(link.source) === 'surprised' ? ' is-surprise' : '';
       lines.append(path(linkPath(layout.beads.get(link.source), layout.beads.get(link.target)),
-        `thread-link is-${link.kind}${surprise}`, link.kind === 'fork' ? { 'marker-end': 'url(#edge-arrow)' } : {}));
+        `thread-link is-${link.kind}${surprise}`, { 'marker-end': 'url(#edge-arrow)' }));
     }
     const heads = new Set(layout.threads.map(thread => thread.head));
     for (const [id, point] of layout.beads) {
